@@ -27,6 +27,7 @@ import type {
 } from "@/types/image";
 
 const HISTORY_KEY = "ai-image-studio-history";
+const CHAT_STORE_KEY = "ai-image-studio-chat-store";
 const API_CONFIG_KEY = "ai-image-studio-api-config";
 const MAX_HISTORY_ITEMS = 20;
 const DEFAULT_API_CONFIG: ImageApiConfig = {
@@ -52,6 +53,13 @@ type PersistedChatTurn = Omit<ChatTurn, "images"> & {
   imageCount: number;
 };
 
+type ChatSession = {
+  id: string;
+  turns: ChatTurn[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 
 
 
@@ -62,6 +70,7 @@ export default function Home() {
   const [quality, setQuality] = useState<ImageQuality>("medium");
   const [count, setCount] = useState(1);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [sessionId, setSessionId] = useState(() => createChatSessionId());
   const [apiConfig, setApiConfig] = useState<ImageApiConfig>(DEFAULT_API_CONFIG);
   const [referenceImage, setReferenceImage] = useState<File | null>(null);
   const [referenceImageSource, setReferenceImageSource] = useState("");
@@ -73,9 +82,11 @@ export default function Home() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [referenceAction, setReferenceAction] = useState<"attach" | "replace">("attach");
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const canGenerate = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading]);
 
@@ -93,14 +104,29 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const rawHistory = window.localStorage.getItem(HISTORY_KEY);
-      if (rawHistory) {
-        const history = JSON.parse(rawHistory) as PersistedChatTurn[];
-        if (Array.isArray(history)) {
-          setTurns(history.slice(0, MAX_HISTORY_ITEMS).map((turn) => ({ ...turn, images: [] })));
+      const rawStore = window.localStorage.getItem(CHAT_STORE_KEY);
+      if (rawStore) {
+        const store = JSON.parse(rawStore) as { activeSessionId?: string; sessions?: ChatSession[] };
+        const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
+        const activeSessionId =
+          typeof store?.activeSessionId === "string" ? store.activeSessionId : sessions[0]?.id;
+        const activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0];
+
+        if (activeSession) {
+          setSessionId(activeSession.id);
+          setTurns(activeSession.turns.slice(0, MAX_HISTORY_ITEMS));
+        }
+      } else {
+        const rawHistory = window.localStorage.getItem(HISTORY_KEY);
+        if (rawHistory) {
+          const history = JSON.parse(rawHistory) as PersistedChatTurn[];
+          if (Array.isArray(history)) {
+            setTurns(history.slice(0, MAX_HISTORY_ITEMS).map((turn) => ({ ...turn, images: [] })));
+          }
         }
       }
     } catch {
+      window.localStorage.removeItem(CHAT_STORE_KEY);
       window.localStorage.removeItem(HISTORY_KEY);
     }
 
@@ -123,9 +149,9 @@ export default function Home() {
 
   useEffect(() => {
     if (historyLoaded) {
-      persistChatTurns(turns);
+      persistChatStore(sessionId, turns);
     }
-  }, [historyLoaded, turns]);
+  }, [historyLoaded, sessionId, turns]);
 
   useEffect(() => {
     const container = chatRef.current;
@@ -159,6 +185,15 @@ export default function Home() {
     const createdAt = new Date().toISOString();
     const promptText = prompt.trim();
     const effectiveMode: ImageMode = referenceImage || referenceImageSource ? "edit" : "generate";
+    const editImage =
+      effectiveMode === "edit"
+        ? referenceImage || (referenceImageSource ? await buildReferenceFileFromSource(referenceImageSource) : null)
+        : null;
+
+    if (effectiveMode === "edit" && !editImage) {
+      setError("参考图暂时读取失败，请重新选择图片后再试。");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -180,7 +215,7 @@ export default function Home() {
     try {
       const apiConfigPayload = normalizeApiConfig(apiConfig);
       const response =
-        effectiveMode === "edit" && referenceImage
+        effectiveMode === "edit" && editImage
           ? await fetch("/api/generate-image", {
               method: "POST",
               body: buildImageEditFormData({
@@ -190,35 +225,21 @@ export default function Home() {
                 quality,
                 count,
                 apiConfig: apiConfigPayload,
-                image: referenceImage,
+                image: editImage,
               }),
             })
-          : effectiveMode === "edit" && referenceImageSource
-            ? await fetch("/api/generate-image", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  prompt: promptText,
-                  size,
-                  resolution,
-                  quality,
-                  n: count,
-                  apiConfig: apiConfigPayload,
-                  referenceImageUrl: referenceImageSource,
-                }),
-              })
-            : await fetch("/api/generate-image", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  prompt: promptText,
-                  size,
-                  resolution,
-                  quality,
-                  n: count,
-                  apiConfig: apiConfigPayload,
-                }),
-              });
+          : await fetch("/api/generate-image", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                prompt: promptText,
+                size,
+                resolution,
+                quality,
+                n: count,
+                apiConfig: apiConfigPayload,
+              }),
+            });
 
       const data = (await response.json()) as GenerateImageResponse;
 
@@ -250,6 +271,28 @@ export default function Home() {
 
   function handleDeleteTurn(id: string) {
     setTurns((current) => current.filter((turn) => turn.id !== id));
+  }
+
+  function handleNewChat() {
+    setSessionId(createChatSessionId());
+    setTurns([]);
+    setPrompt("");
+    setReferenceImage(null);
+    setReferenceImageSource("");
+    setReferencePreviewUrl("");
+    setReferenceAction("attach");
+    setError("");
+    scrollToComposer();
+  }
+
+  function handleClearChat() {
+    setTurns([]);
+    setPrompt("");
+    setReferenceImage(null);
+    setReferenceImageSource("");
+    setReferencePreviewUrl("");
+    setReferenceAction("attach");
+    setError("");
   }
 
   function scrollToComposer() {
@@ -309,7 +352,11 @@ export default function Home() {
 
   return (
     <main className="flex h-screen flex-col overflow-hidden">
-      <Header onOpenSettings={() => setSettingsOpen(true)} />
+      <Header
+        onOpenSettings={() => setSettingsOpen(true)}
+        onNewChat={handleNewChat}
+        onClearChat={handleClearChat}
+      />
       <SettingsDialog
         open={settingsOpen}
         apiConfig={apiConfig}
@@ -338,6 +385,7 @@ export default function Home() {
 
       <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 py-4 sm:px-6">
         <section
+          id="history"
           ref={chatRef}
           className="min-h-0 flex-1 space-y-5 overflow-y-auto rounded-lg border border-white/10 bg-panel/55 p-4 shadow-soft"
         >
@@ -435,26 +483,65 @@ export default function Home() {
                 placeholder="输入你想生成或修改的画面..."
                 className="min-h-[56px] flex-1 resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
               />
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                disabled={loading}
-                className={cn(
-                  "inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-md border transition",
-                  referencePreviewUrl
-                    ? "border-mint/50 bg-mint/10 text-mint hover:bg-mint hover:text-ink"
-                    : "border-white/10 bg-white/[0.04] text-stone-200 hover:border-mint/50 hover:text-mint",
-                  loading ? "cursor-not-allowed opacity-60" : "",
-                )}
-                title="添加图片"
-              >
-                <ImagePlus className="size-5" aria-hidden />
-                <span className="sr-only">添加图片</span>
-              </button>
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setUploadMenuOpen((current) => !current)}
+                  disabled={loading}
+                  className={cn(
+                    "inline-flex h-14 w-14 items-center justify-center rounded-md border transition",
+                    referencePreviewUrl
+                      ? "border-mint/50 bg-mint/10 text-mint hover:bg-mint hover:text-ink"
+                      : "border-white/10 bg-white/[0.04] text-stone-200 hover:border-mint/50 hover:text-mint",
+                    loading ? "cursor-not-allowed opacity-60" : "",
+                  )}
+                  title="添加图片"
+                >
+                  <ImagePlus className="size-5" aria-hidden />
+                  <span className="sr-only">添加图片</span>
+                </button>
+
+                {uploadMenuOpen ? (
+                  <div className="absolute bottom-full right-0 mb-2 w-36 overflow-hidden rounded-md border border-white/10 bg-ink/95 shadow-soft">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadMenuOpen(false);
+                        imageInputRef.current?.click();
+                      }}
+                      className="block w-full px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.05]"
+                    >
+                      从相册选择
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadMenuOpen(false);
+                        cameraInputRef.current?.click();
+                      }}
+                      className="block w-full px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.05]"
+                    >
+                      直接拍照
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <input
                 ref={imageInputRef}
                 type="file"
                 accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                  handleReferenceImageChange(event.target.files?.[0] || null);
+                  event.currentTarget.value = "";
+                }}
+                disabled={loading}
+              />
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
                 className="hidden"
                 onChange={(event) => {
                   handleReferenceImageChange(event.target.files?.[0] || null);
@@ -478,7 +565,6 @@ export default function Home() {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-400">
-              <span>Enter 发送，Shift+Enter 换行</span>
               <button type="button" onClick={() => setSettingsOpen(true)} className="transition hover:text-mint">
                 参数设置
               </button>
@@ -772,25 +858,34 @@ function buildImageEditFormData({
   return formData;
 }
 
-function persistChatTurns(turns: ChatTurn[]) {
-  const storedTurns = turns.slice(0, MAX_HISTORY_ITEMS).map(({ images, ...turn }) => ({
-    ...turn,
-    imageCount: images.length,
-  }));
+function persistChatStore(activeSessionId: string, turns: ChatTurn[]) {
+  const nextSession: ChatSession = {
+    id: activeSessionId,
+    turns: turns.slice(0, MAX_HISTORY_ITEMS),
+    createdAt: turns[0]?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 
   try {
-    if (storedTurns.length === 0) {
-      window.localStorage.removeItem(HISTORY_KEY);
-      return;
-    }
+    const rawStore = window.localStorage.getItem(CHAT_STORE_KEY);
+    const currentStore = rawStore ? (JSON.parse(rawStore) as { activeSessionId?: string; sessions?: ChatSession[] }) : {};
+    const sessions = Array.isArray(currentStore.sessions) ? currentStore.sessions : [];
+    const nextSessions = sessions.filter((session) => session.id !== activeSessionId);
+    nextSessions.unshift(nextSession);
 
-    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(storedTurns));
+    window.localStorage.setItem(
+      CHAT_STORE_KEY,
+      JSON.stringify({
+        activeSessionId,
+        sessions: nextSessions.slice(0, 20),
+      }),
+    );
   } catch (error) {
     if (!isStorageQuotaError(error)) {
       return;
     }
 
-    window.localStorage.removeItem(HISTORY_KEY);
+    window.localStorage.removeItem(CHAT_STORE_KEY);
   }
 }
 
@@ -827,6 +922,10 @@ function createChatTurnId() {
   return `turn_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
+function createChatSessionId() {
+  return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
 function getImageSrc(image: GeneratedImage) {
   if (image.url) {
     return image.url;
@@ -852,13 +951,31 @@ async function buildReferenceFileFromImage(image: GeneratedImage, src: string) {
   }
 
   try {
-    const response = await fetch(src);
+    const response = await fetch(`/api/image-proxy?url=${encodeURIComponent(src)}`);
     if (!response.ok) {
       return null;
     }
 
     const blob = await response.blob();
     return new File([blob], fileName, { type: blob.type || "image/png" });
+  } catch {
+    return null;
+  }
+}
+
+async function buildReferenceFileFromSource(src: string) {
+  if (!src) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`/api/image-proxy?url=${encodeURIComponent(src)}`);
+    if (!response.ok) {
+      return null;
+    }
+
+    const blob = await response.blob();
+    return new File([blob], "reference.png", { type: blob.type || "image/png" });
   } catch {
     return null;
   }

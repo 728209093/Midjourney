@@ -46,11 +46,9 @@ export function ApiSettings({
           <span className="mb-2 block text-xs font-medium text-stone-300">IMAGE_API_URL</span>
           <input
             type="url"
-            value={value.apiUrl}
-            onChange={(event) => updateField("apiUrl", event.target.value)}
-            disabled={disabled}
-            placeholder="https://dahlo.live"
-            className="h-11 w-full rounded-md border border-white/10 bg-ink px-3 text-sm text-white transition placeholder:text-stone-600 focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
+            value="https://dahlo.live"
+            disabled
+            className="h-11 w-full cursor-not-allowed rounded-md border border-white/10 bg-ink px-3 text-sm text-stone-400 opacity-60"
           />
         </label>
 

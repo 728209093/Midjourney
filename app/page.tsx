@@ -1,9 +1,10 @@
 ﻿"use client";
 
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   ChevronDown,
+  Download,
   ImagePlus,
   Loader2,
   RotateCcw,
@@ -15,7 +16,7 @@ import {
 import { Header } from "@/components/Header";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { validateApiBaseUrl } from "@/lib/api-url";
-import { cn } from "@/lib/utils";
+import { cn, downloadImage, getImageSrc } from "@/lib/utils";
 import type {
   GenerateImageResponse,
   GeneratedImage,
@@ -31,7 +32,7 @@ const CHAT_STORE_KEY = "ai-image-studio-chat-store";
 const API_CONFIG_KEY = "ai-image-studio-api-config";
 const MAX_HISTORY_ITEMS = 20;
 const DEFAULT_API_CONFIG: ImageApiConfig = {
-  apiUrl: "",
+  apiUrl: "https://dahlo.live",
   apiKey: "",
   model: "gpt-image-2",
 };
@@ -55,7 +56,7 @@ type PersistedChatTurn = Omit<ChatTurn, "images"> & {
 
 type ChatSession = {
   id: string;
-  turns: ChatTurn[];
+  turns: PersistedChatTurn[];
   createdAt: string;
   updatedAt: string;
 };
@@ -87,6 +88,7 @@ export default function Home() {
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const uploadMenuRef = useRef<HTMLDivElement>(null);
 
   const canGenerate = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading]);
 
@@ -114,7 +116,14 @@ export default function Home() {
 
         if (activeSession) {
           setSessionId(activeSession.id);
-          setTurns(activeSession.turns.slice(0, MAX_HISTORY_ITEMS));
+          // 从持久化格式还原：images 为空数组（图片内容不再缓存到 localStorage）
+          setTurns(
+            activeSession.turns.slice(0, MAX_HISTORY_ITEMS).map((turn) => ({
+              ...turn,
+              images: [],
+              status: "done" as const,
+            })),
+          );
         }
       } else {
         const rawHistory = window.localStorage.getItem(HISTORY_KEY);
@@ -172,6 +181,35 @@ export default function Home() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turns, loading]);
+
+  // ESC 关闭设置弹窗
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [settingsOpen]);
+
+  // 点击菜单外部时收起上传菜单
+  useEffect(() => {
+    if (!uploadMenuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (uploadMenuRef.current && !uploadMenuRef.current.contains(e.target as Node)) {
+        setUploadMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [uploadMenuOpen]);
+
+  const handleDownload = useCallback((image: GeneratedImage) => {
+    const src = getImageSrc(image);
+    if (!src) return;
+    const ext = src.startsWith("data:image/png") ? "png" : src.startsWith("data:image/webp") ? "webp" : "jpg";
+    downloadImage(src, `ai-image-${image.id}.${ext}`);
+  }, []);
 
   async function handleGenerate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -369,17 +407,10 @@ export default function Home() {
       >
         <ParameterSettings
           resolution={resolution}
-          quality={quality}
           count={count}
           loading={loading}
-          referenceImage={referenceImage}
-          referencePreviewUrl={referencePreviewUrl}
-          referenceAction={referenceAction}
           onResolutionChange={setResolution}
-          onQualityChange={setQuality}
           onCountChange={setCount}
-          onReferenceImageChange={handleReferenceImageChange}
-          onReferenceActionChange={setReferenceAction}
         />
       </SettingsDialog>
 
@@ -413,7 +444,9 @@ export default function Home() {
                   {turn.status === "error" ? <p className="text-sm leading-6 text-rose-200">{turn.error}</p> : null}
                   {turn.status === "done" ? (
                     <div className="space-y-3">
-                      <p className="text-xs text-stone-400">已生成 {turn.images.length} 张图片</p>
+                      <p className="text-xs text-stone-400">
+                        已生成 {turn.images.length > 0 ? turn.images.length : (turn as unknown as { imageCount?: number }).imageCount ?? 0} 张图片
+                      </p>
                       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                         {turn.images.map((image) => (
                           <GeneratedImageCard
@@ -421,6 +454,7 @@ export default function Home() {
                             image={image}
                             onContinueEdit={handleContinueEdit}
                             onReuse={handleReuse}
+                            onDownload={handleDownload}
                           />
                         ))}
                       </div>
@@ -483,7 +517,7 @@ export default function Home() {
                 placeholder="输入你想生成或修改的画面..."
                 className="min-h-[56px] flex-1 resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
               />
-              <div className="relative shrink-0">
+              <div className="relative shrink-0" ref={uploadMenuRef}>
                 <button
                   type="button"
                   onClick={() => setUploadMenuOpen((current) => !current)}
@@ -569,7 +603,6 @@ export default function Home() {
                 参数设置
               </button>
             </div>
-            {error ? <p className="text-sm text-rose-200">{error}</p> : null}
           </form>
         </section>
       </div>
@@ -590,30 +623,16 @@ export default function Home() {
 
 function ParameterSettings({
   resolution,
-  quality,
   count,
   loading,
-  referenceImage,
-  referencePreviewUrl,
-  referenceAction,
   onResolutionChange,
-  onQualityChange,
   onCountChange,
-  onReferenceImageChange,
-  onReferenceActionChange,
 }: {
   resolution: ImageResolution;
-  quality: ImageQuality;
   count: number;
   loading: boolean;
-  referenceImage: File | null;
-  referencePreviewUrl: string;
-  referenceAction: "attach" | "replace";
   onResolutionChange: (value: ImageResolution) => void;
-  onQualityChange: (value: ImageQuality) => void;
   onCountChange: (value: number) => void;
-  onReferenceImageChange: (value: File | null) => void;
-  onReferenceActionChange: (value: "attach" | "replace") => void;
 }) {
   return (
     <section className="rounded-lg border border-white/10 bg-panel/86 p-4 shadow-soft">
@@ -625,10 +644,6 @@ function ParameterSettings({
       </div>
 
       <div className="space-y-4">
-        <div className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs leading-5 text-stone-300">
-          不添加图片就是文生图；添加图片后会自动按图生图发送。
-        </div>
-
         <div className="space-y-2">
           <p className="text-xs font-medium text-stone-300">分辨率</p>
           <div className="grid grid-cols-3 gap-2">
@@ -639,15 +654,6 @@ function ParameterSettings({
                 active={resolution === item}
                 onClick={() => onResolutionChange(item)}
               />
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-stone-300">质量</p>
-          <div className="grid grid-cols-3 gap-2">
-            {(["low", "medium", "high"] as const).map((item) => (
-              <ModeChip key={item} label={item} active={quality === item} onClick={() => onQualityChange(item)} />
             ))}
           </div>
         </div>
@@ -666,60 +672,6 @@ function ParameterSettings({
             disabled={loading}
             className="w-full accent-mint"
           />
-        </div>
-
-        <div className="space-y-3 rounded-md border border-white/10 bg-ink/50 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-white">参考图</p>
-            <div className="flex items-center gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => onReferenceActionChange("attach")}
-                className={cn(
-                  "rounded-md px-2 py-1 transition",
-                  referenceAction === "attach" ? "bg-mint text-ink" : "border border-white/10 text-stone-300",
-                )}
-              >
-                附加
-              </button>
-              <button
-                type="button"
-                onClick={() => onReferenceActionChange("replace")}
-                className={cn(
-                  "rounded-md px-2 py-1 transition",
-                  referenceAction === "replace" ? "bg-mint text-ink" : "border border-white/10 text-stone-300",
-                )}
-              >
-                替换
-              </button>
-            </div>
-          </div>
-
-          <label className="flex cursor-pointer items-center gap-3 rounded-md border border-dashed border-white/15 bg-white/[0.03] px-3 py-3 text-sm text-stone-300 transition hover:border-mint/50 hover:text-white">
-            <ImagePlus className="size-4 text-mint" aria-hidden />
-            <span className="min-w-0 truncate">{referenceImage ? referenceImage.name : "上传一张图用于图生图"}</span>
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(event) => onReferenceImageChange(event.target.files?.[0] || null)}
-              disabled={loading}
-            />
-          </label>
-
-          {referencePreviewUrl ? (
-            <div className="space-y-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={referencePreviewUrl} alt="参考图预览" className="max-h-44 w-full rounded-md object-cover" />
-              <button
-                type="button"
-                onClick={() => onReferenceImageChange(null)}
-                className="text-xs text-stone-400 transition hover:text-coral"
-              >
-                移除参考图
-              </button>
-            </div>
-          ) : null}
         </div>
       </div>
     </section>
@@ -787,23 +739,45 @@ function GeneratedImageCard({
   image,
   onContinueEdit,
   onReuse,
+  onDownload,
 }: {
   image: GeneratedImage;
   onContinueEdit: (image: GeneratedImage) => void;
   onReuse: (image: GeneratedImage) => void;
+  onDownload: (image: GeneratedImage) => void;
 }) {
   const src = getImageSrc(image);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
 
   return (
     <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
       <button
         type="button"
         onClick={() => onReuse(image)}
-        className="block w-full text-left transition hover:bg-white/[0.04]"
+        className="relative block w-full text-left transition hover:bg-white/[0.04]"
         title="点击复用这张图的参数"
       >
+        {/* 加载占位骨架 */}
+        {!imgLoaded && !imgError ? (
+          <div className="aspect-square w-full animate-pulse rounded-t-lg bg-white/[0.06]" />
+        ) : null}
+        {imgError ? (
+          <div className="grid aspect-square w-full place-items-center rounded-t-lg bg-white/[0.04] text-xs text-stone-500">
+            图片加载失败
+          </div>
+        ) : null}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} alt={image.prompt} className="aspect-square w-full object-cover" />
+        <img
+          src={src}
+          alt={image.prompt}
+          className={cn(
+            "aspect-square w-full object-cover transition-opacity duration-300",
+            imgLoaded ? "opacity-100" : "absolute inset-0 opacity-0",
+          )}
+          onLoad={() => setImgLoaded(true)}
+          onError={() => { setImgLoaded(true); setImgError(true); }}
+        />
       </button>
       <div className="space-y-2 border-t border-white/10 p-2">
         <p className="line-clamp-2 text-xs leading-5 text-stone-300">{image.prompt}</p>
@@ -820,9 +794,18 @@ function GeneratedImageCard({
             type="button"
             onClick={() => onReuse(image)}
             className="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 px-2 py-1.5 text-xs text-stone-300 transition hover:border-mint/50 hover:text-white"
+            title="复用参数"
           >
             <RotateCcw className="size-3.5" aria-hidden />
-            复用参数
+          </button>
+          <button
+            type="button"
+            onClick={() => onDownload(image)}
+            disabled={!src}
+            className="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 px-2 py-1.5 text-xs text-stone-300 transition hover:border-mint/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            title="下载图片"
+          >
+            <Download className="size-3.5" aria-hidden />
           </button>
         </div>
       </div>
@@ -859,9 +842,15 @@ function buildImageEditFormData({
 }
 
 function persistChatStore(activeSessionId: string, turns: ChatTurn[]) {
+  // 只持久化元数据，不存储 base64/url 内容，避免撑爆 localStorage quota
+  const persistedTurns: PersistedChatTurn[] = turns.slice(0, MAX_HISTORY_ITEMS).map(({ images, ...rest }) => ({
+    ...rest,
+    imageCount: images.length,
+  }));
+
   const nextSession: ChatSession = {
     id: activeSessionId,
-    turns: turns.slice(0, MAX_HISTORY_ITEMS),
+    turns: persistedTurns,
     createdAt: turns[0]?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -924,18 +913,6 @@ function createChatTurnId() {
 
 function createChatSessionId() {
   return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-function getImageSrc(image: GeneratedImage) {
-  if (image.url) {
-    return image.url;
-  }
-
-  if (image.base64) {
-    return image.base64.startsWith("data:") ? image.base64 : `data:image/png;base64,${image.base64}`;
-  }
-
-  return "";
 }
 
 async function buildReferenceFileFromImage(image: GeneratedImage, src: string) {

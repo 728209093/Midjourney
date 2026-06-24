@@ -31,7 +31,7 @@ export default function DocsPage() {
             </div>
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mint">
-                AI Image Studio
+                天晴了绘图
               </p>
               <h1 className="text-base font-semibold text-white sm:text-lg">说明文档</h1>
             </div>

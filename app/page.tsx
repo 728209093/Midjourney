@@ -52,6 +52,9 @@ type PersistedChatTurn = Omit<ChatTurn, "images"> & {
   imageCount: number;
 };
 
+
+
+
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [size] = useState<ImageSize>("1024x1024");

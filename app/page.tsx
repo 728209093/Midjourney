@@ -347,7 +347,6 @@ export default function Home() {
   async function handleContinueEdit(image: GeneratedImage) {
     const src = getImageSrc(image);
     const file = await buildReferenceFileFromImage(image, src);
-    setPrompt(image.prompt);
     setReferenceAction("attach");
     setReferenceImageSource(src);
     setReferenceImage(file);

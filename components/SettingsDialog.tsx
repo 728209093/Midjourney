@@ -9,7 +9,7 @@ import type { ImageApiConfig } from "@/types/image";
 type SettingsDialogProps = {
   open: boolean;
   apiConfig: ImageApiConfig;
-  message: string;
+  message: { text: string; tone: "success" | "error" | "info" } | null;
   disabled?: boolean;
   children?: ReactNode;
   onApiConfigChange: (value: ImageApiConfig) => void;
@@ -32,6 +32,13 @@ export function SettingsDialog({
   if (!open) {
     return null;
   }
+
+  const messageClassName =
+    message?.tone === "error"
+      ? "border-coral/70 bg-coral/[0.16] text-coral shadow-[0_0_0_1px_rgba(251,113,133,0.16)]"
+      : message?.tone === "success"
+        ? "border-mint/40 bg-mint/[0.12] text-mint"
+        : "border-gold/45 bg-gold/[0.12] text-gold";
 
   return (
     <div
@@ -68,8 +75,11 @@ export function SettingsDialog({
         </div>
 
         {message ? (
-          <p className="mt-3 rounded-md border border-mint/30 bg-mint/10 px-3 py-2 text-xs text-mint">
-            {message}
+          <p
+            className={`mt-3 rounded-md border px-3 py-2.5 text-sm font-medium ${messageClassName}`}
+            role="alert"
+          >
+            {message.text}
           </p>
         ) : null}
       </div>

@@ -46,3 +46,13 @@ a:focus-visible {
 ::selection {
   background: rgba(94, 234, 212, 0.32);
 }
+
+@keyframes image-loading-shine {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(120%);
+  }
+}

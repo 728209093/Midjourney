@@ -11,6 +11,9 @@ import {
   SendHorizontal,
   User,
   WandSparkles,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 
 import { Header } from "@/components/Header";
@@ -61,6 +64,11 @@ type ChatSession = {
   updatedAt: string;
 };
 
+type SettingsMessage = {
+  text: string;
+  tone: "success" | "error" | "info";
+};
+
 
 
 
@@ -78,8 +86,9 @@ export default function Home() {
   const [referencePreviewUrl, setReferencePreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [settingsMessage, setSettingsMessage] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState<SettingsMessage | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [previewImage, setPreviewImage] = useState<GeneratedImage | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [referenceAction, setReferenceAction] = useState<"attach" | "replace">("attach");
@@ -363,18 +372,21 @@ export default function Home() {
         apiKey: config.apiKey || "",
         model: config.model || "gpt-image-2",
       });
-      setSettingsMessage("API 设置已保存。");
-      window.setTimeout(() => setSettingsMessage(""), 1600);
+      setSettingsMessage(null);
+      setSettingsOpen(false);
     } catch (saveError) {
-      setSettingsMessage(saveError instanceof Error ? saveError.message : "API 设置保存失败。");
+      setSettingsMessage({
+        text: saveError instanceof Error ? saveError.message : "API 设置保存失败。",
+        tone: "error",
+      });
     }
   }
 
   function handleResetApiConfig() {
     window.localStorage.removeItem(API_CONFIG_KEY);
     setApiConfig(DEFAULT_API_CONFIG);
-    setSettingsMessage("已清除本地 API 设置。");
-    window.setTimeout(() => setSettingsMessage(""), 1600);
+    setSettingsMessage({ text: "已清除本地 API 设置。", tone: "info" });
+    window.setTimeout(() => setSettingsMessage(null), 1600);
   }
 
   function handleReferenceImageChange(file: File | null) {
@@ -438,7 +450,12 @@ export default function Home() {
 
               <div className="flex items-start gap-3">
                 <Avatar icon={<Bot className="size-4" aria-hidden />} />
-                <div className="min-w-0 max-w-[min(56rem,86vw)] flex-1 rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3">
+                <div
+                  className={cn(
+                    "min-w-0 max-w-[min(56rem,86vw)] rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
+                    turn.status === "loading" ? "w-fit" : "flex-1",
+                  )}
+                >
                   {turn.status === "loading" ? <LoadingBubble count={count} /> : null}
                   {turn.status === "error" ? <p className="text-sm leading-6 text-rose-200">{turn.error}</p> : null}
                   {turn.status === "done" ? (
@@ -451,6 +468,7 @@ export default function Home() {
                           <GeneratedImageCard
                             key={image.id}
                             image={image}
+                            onPreview={setPreviewImage}
                             onContinueEdit={handleContinueEdit}
                             onReuse={handleReuse}
                             onDownload={handleDownload}
@@ -616,6 +634,12 @@ export default function Home() {
           回到底部
         </button>
       ) : null}
+
+      <ImagePreviewDialog
+        image={previewImage}
+        onClose={() => setPreviewImage(null)}
+        onDownload={handleDownload}
+      />
     </main>
   );
 }
@@ -726,21 +750,43 @@ function ModeChip({
 
 function LoadingBubble({ count }: { count: number }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {Array.from({ length: count }).map((_, index) => (
-        <div key={index} className="aspect-square animate-pulse rounded-lg border border-white/10 bg-white/[0.05]" />
-      ))}
+    <div className="space-y-3" aria-live="polite" aria-busy="true">
+      <div className="flex items-center gap-2 text-sm font-medium text-white">
+        <Loader2 className="size-4 animate-spin text-mint" aria-hidden />
+        <span>正在生成图片</span>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: count }).map((_, index) => (
+          <div
+            key={index}
+            className="relative size-[min(16rem,68vw)] overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] sm:size-60"
+          >
+            <div className="absolute inset-0 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.04)_32%,rgba(94,234,212,0.18)_48%,rgba(255,255,255,0.05)_64%,transparent_100%)] animate-[image-loading-shine_1.7s_ease-in-out_infinite]" />
+            <div className="absolute inset-4 rounded-md border border-white/10 bg-ink/[0.45]" />
+            <div className="absolute bottom-4 left-4 right-4 space-y-2">
+              <div className="h-2 rounded-full bg-white/15" />
+              <div className="h-2 w-2/3 rounded-full bg-white/10" />
+            </div>
+            <div className="absolute right-4 top-4 grid size-8 place-items-center rounded-full border border-mint/25 bg-mint/10 text-mint">
+              <WandSparkles className="size-4" aria-hidden />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 function GeneratedImageCard({
   image,
+  onPreview,
   onContinueEdit,
   onReuse,
   onDownload,
 }: {
   image: GeneratedImage;
+  onPreview: (image: GeneratedImage) => void;
   onContinueEdit: (image: GeneratedImage) => void;
   onReuse: (image: GeneratedImage) => void;
   onDownload: (image: GeneratedImage) => void;
@@ -753,9 +799,9 @@ function GeneratedImageCard({
     <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
       <button
         type="button"
-        onClick={() => onReuse(image)}
+        onClick={() => onPreview(image)}
         className="relative block w-full text-left transition hover:bg-white/[0.04]"
-        title="点击复用这张图的参数"
+        title="预览大图"
       >
         {/* 加载占位骨架 */}
         {!imgLoaded && !imgError ? (
@@ -806,6 +852,127 @@ function GeneratedImageCard({
           >
             <Download className="size-3.5" aria-hidden />
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImagePreviewDialog({
+  image,
+  onClose,
+  onDownload,
+}: {
+  image: GeneratedImage | null;
+  onClose: () => void;
+  onDownload: (image: GeneratedImage) => void;
+}) {
+  const [zoom, setZoom] = useState(1);
+
+  useEffect(() => {
+    if (!image) {
+      return;
+    }
+
+    setZoom(1);
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+      if ((event.key === "+" || event.key === "=") && !event.metaKey && !event.ctrlKey) {
+        setZoom((current) => Math.min(3, Number((current + 0.25).toFixed(2))));
+      }
+      if (event.key === "-" && !event.metaKey && !event.ctrlKey) {
+        setZoom((current) => Math.max(0.5, Number((current - 0.25).toFixed(2))));
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [image, onClose]);
+
+  if (!image) {
+    return null;
+  }
+
+  const src = getImageSrc(image);
+  const canZoomOut = zoom > 0.5;
+  const canZoomIn = zoom < 3;
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex flex-col bg-black/[0.92] backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="图片预览"
+      onClick={onClose}
+    >
+      <div
+        className="flex items-center justify-between gap-3 border-b border-white/10 bg-ink/[0.85] px-3 py-3 sm:px-4"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <p className="min-w-0 flex-1 truncate text-sm text-stone-300">{image.prompt}</p>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setZoom((current) => Math.max(0.5, Number((current - 0.25).toFixed(2))))}
+            disabled={!canZoomOut}
+            className="grid size-10 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-40"
+            title="缩小"
+          >
+            <ZoomOut className="size-4" aria-hidden />
+            <span className="sr-only">缩小</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setZoom(1)}
+            className="h-10 min-w-14 rounded-md border border-white/10 bg-white/[0.04] px-2 text-xs font-medium text-stone-200 transition hover:border-mint/50 hover:text-mint"
+            title="重置缩放"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            type="button"
+            onClick={() => setZoom((current) => Math.min(3, Number((current + 0.25).toFixed(2))))}
+            disabled={!canZoomIn}
+            className="grid size-10 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-40"
+            title="放大"
+          >
+            <ZoomIn className="size-4" aria-hidden />
+            <span className="sr-only">放大</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onDownload(image)}
+            disabled={!src}
+            className="grid size-10 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-40"
+            title="保存图片"
+          >
+            <Download className="size-4" aria-hidden />
+            <span className="sr-only">保存图片</span>
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-10 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-coral/60 hover:text-coral"
+            title="关闭"
+          >
+            <X className="size-4" aria-hidden />
+            <span className="sr-only">关闭</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-6" onClick={(event) => event.stopPropagation()}>
+        <div className="grid min-h-full place-items-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={image.prompt}
+            className="max-h-[calc(100vh-7rem)] max-w-full rounded-md object-contain shadow-soft transition-transform duration-150"
+            style={{ transform: `scale(${zoom})` }}
+          />
         </div>
       </div>
     </div>

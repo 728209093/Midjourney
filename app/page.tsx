@@ -266,6 +266,7 @@ export default function Home() {
           ? await fetch("/api/generate-image", {
               method: "POST",
               headers: { Accept: "application/json" },
+              cache: "no-store",
               body: buildImageEditFormData({
                 prompt: promptText,
                 size,
@@ -282,6 +283,7 @@ export default function Home() {
                 "Content-Type": "application/json",
                 Accept: "application/json",
               },
+              cache: "no-store",
               body: JSON.stringify({
                 prompt: promptText,
                 size,

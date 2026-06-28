@@ -29,89 +29,87 @@ function isRateLimited(ip: string) {
   return bucket.count > MAX_REQUESTS;
 }
 
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, { status });
+}
+
 export async function POST(request: NextRequest) {
-  const ip = getClientIp(request);
-
-  if (isRateLimited(ip)) {
-    return NextResponse.json(
-      { success: false, message: "请求过于频繁，请稍后再试。" },
-      { status: 429 },
-    );
-  }
-
-  const contentType = request.headers.get("content-type") || "";
-
-  if (contentType.includes("multipart/form-data")) {
-    return handleImageEdit(request);
-  }
-
-  const body = await request.json().catch(() => null);
-  const parsed = validateGenerateRequest(body);
-
-  if (!parsed.ok) {
-    return NextResponse.json({ success: false, message: parsed.message }, { status: 400 });
-  }
-
   try {
+    const ip = getClientIp(request);
+    if (isRateLimited(ip)) {
+      return json({ success: false, message: "请求过于频繁，请稍后再试。" }, 429);
+    }
+
+    const contentType = request.headers.get("content-type") || "";
+
+    if (contentType.includes("multipart/form-data")) {
+      return await handleImageEdit(request);
+    }
+
+    const body = await request.json().catch(() => null);
+    const parsed = validateGenerateRequest(body);
+
+    if (!parsed.ok) {
+      return json({ success: false, message: parsed.message }, 400);
+    }
+
     const images = await generateImages(parsed.data, parsed.apiConfig);
-    return NextResponse.json({ success: true, images });
+    return json({ success: true, images }, 200);
   } catch (error) {
     const message = error instanceof Error ? error.message : "图片生成失败，请稍后重试。";
-    return NextResponse.json({ success: false, message }, { status: 500 });
+    return json({ success: false, message }, 500);
   }
 }
 
 async function handleImageEdit(request: NextRequest) {
-  const formData = await request.formData().catch(() => null);
-
-  if (!formData) {
-    return NextResponse.json({ success: false, message: "图生图请求格式不正确。" }, { status: 400 });
-  }
-
-  const apiConfigRaw = formData.get("apiConfig");
-  const apiConfig =
-    typeof apiConfigRaw === "string" && apiConfigRaw
-      ? parseApiConfig(apiConfigRaw)
-      : undefined;
-
-  if (apiConfigRaw && apiConfig === null) {
-    return NextResponse.json({ success: false, message: "API 设置格式不正确。" }, { status: 400 });
-  }
-
-  const body = {
-    prompt: formData.get("prompt"),
-    size: formData.get("size"),
-    resolution: formData.get("resolution"),
-    quality: formData.get("quality"),
-    n: Number(formData.get("n")),
-    apiConfig,
-    referenceImageUrl: formData.get("referenceImageUrl"),
-  };
-
-  const parsed = validateGenerateRequest(body);
-  if (!parsed.ok) {
-    return NextResponse.json({ success: false, message: parsed.message }, { status: 400 });
-  }
-
   try {
+    const formData = await request.formData().catch(() => null);
+
+    if (!formData) {
+      return json({ success: false, message: "图生图请求格式不正确。" }, 400);
+    }
+
+    const apiConfigRaw = formData.get("apiConfig");
+    const apiConfig =
+      typeof apiConfigRaw === "string" && apiConfigRaw ? parseApiConfig(apiConfigRaw) : undefined;
+
+    if (apiConfigRaw && apiConfig === null) {
+      return json({ success: false, message: "API 设置格式不正确。" }, 400);
+    }
+
+    const body = {
+      prompt: formData.get("prompt"),
+      size: formData.get("size"),
+      resolution: formData.get("resolution"),
+      quality: formData.get("quality"),
+      n: Number(formData.get("n")),
+      apiConfig,
+      referenceImageUrl: formData.get("referenceImageUrl"),
+    };
+
+    const parsed = validateGenerateRequest(body);
+    if (!parsed.ok) {
+      return json({ success: false, message: parsed.message }, 400);
+    }
+
     if (parsed.referenceImageUrl) {
       const images = await editImages(
         { ...parsed.data, referenceImageUrl: parsed.referenceImageUrl },
         parsed.apiConfig,
       );
-      return NextResponse.json({ success: true, images });
+      return json({ success: true, images }, 200);
     }
 
     const image = validateImageFile(formData.get("image"));
     if (!image.ok) {
-      return NextResponse.json({ success: false, message: image.message }, { status: 400 });
+      return json({ success: false, message: image.message }, 400);
     }
 
     const images = await editImages({ ...parsed.data, image: image.file }, parsed.apiConfig);
-    return NextResponse.json({ success: true, images });
+    return json({ success: true, images }, 200);
   } catch (error) {
     const message = error instanceof Error ? error.message : "图生图失败，请稍后重试。";
-    return NextResponse.json({ success: false, message }, { status: 500 });
+    return json({ success: false, message }, 500);
   }
 }
 

@@ -265,6 +265,7 @@ export default function Home() {
         effectiveMode === "edit" && editImage
           ? await fetch("/api/generate-image", {
               method: "POST",
+              headers: { Accept: "application/json" },
               body: buildImageEditFormData({
                 prompt: promptText,
                 size,
@@ -277,7 +278,10 @@ export default function Home() {
             })
           : await fetch("/api/generate-image", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
               body: JSON.stringify({
                 prompt: promptText,
                 size,
@@ -288,7 +292,7 @@ export default function Home() {
               }),
             });
 
-      const data = (await response.json()) as GenerateImageResponse;
+      const data = await parseGenerateImageResponse(response);
 
       if (!data.success) {
         throw new Error(data.message);
@@ -756,11 +760,11 @@ function LoadingBubble({ count }: { count: number }) {
         <span>正在生成图片</span>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="flex flex-wrap gap-3">
         {Array.from({ length: count }).map((_, index) => (
           <div
             key={index}
-            className="relative size-[min(16rem,68vw)] overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] sm:size-60"
+            className="relative size-[min(16rem,68vw)] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] sm:size-60"
           >
             <div className="absolute inset-0 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.04)_32%,rgba(94,234,212,0.18)_48%,rgba(255,255,255,0.05)_64%,transparent_100%)] animate-[image-loading-shine_1.7s_ease-in-out_infinite]" />
             <div className="absolute inset-4 rounded-md border border-white/10 bg-ink/[0.45]" />
@@ -1134,4 +1138,36 @@ function base64ToBlob(input: string) {
   }
 
   return new Blob([bytes], { type: "image/png" });
+}
+
+async function parseGenerateImageResponse(response: Response): Promise<GenerateImageResponse> {
+  const contentType = response.headers.get("content-type") || "";
+  const raw = await response.text();
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    throw new Error(`接口未返回内容，状态码 ${response.status}。`);
+  }
+
+  if (!contentType.includes("application/json")) {
+    const snippet = trimmed.replace(/\s+/g, " ").slice(0, 160);
+    throw new Error(
+      snippet.startsWith("<")
+        ? `服务端返回了 HTML 页面，状态码 ${response.status}，请稍后重试。`
+        : `服务端返回了非 JSON 内容：${snippet}`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed) as unknown;
+  } catch {
+    throw new Error(`接口返回了无法解析的 JSON，状态码 ${response.status}。`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || !("success" in parsed)) {
+    throw new Error(`接口响应格式异常，状态码 ${response.status}。`);
+  }
+
+  return parsed as GenerateImageResponse;
 }

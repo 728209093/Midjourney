@@ -47,4 +47,16 @@ echo "Deploy finished."
 docker ps --filter "name=$APP_NAME" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 echo
 echo "Local check:"
-curl -I "http://127.0.0.1:${PORT}" || true
+for attempt in $(seq 1 20); do
+  if curl -fsI "http://127.0.0.1:${PORT}" >/dev/null; then
+    curl -I "http://127.0.0.1:${PORT}"
+    exit 0
+  fi
+
+  echo "Waiting for app to be ready... ($attempt/20)"
+  sleep 1
+done
+
+echo "App did not respond in time. Recent container logs:"
+docker logs --tail 80 "$APP_NAME" || true
+exit 1

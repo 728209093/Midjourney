@@ -26,27 +26,55 @@ export function getImageSrc(image: { url?: string; base64?: string }) {
   return "";
 }
 
-export async function downloadImage(src: string, filename: string) {
-  if (typeof navigator !== "undefined" && "share" in navigator && "canShare" in navigator) {
-    try {
-      const response = await fetchDownloadSource(src);
-      const blob = await response.blob();
-      const file = new File([blob], filename, { type: blob.type || "image/png" });
-      const shareData: ShareData = { files: [file], title: filename };
-
-      if (navigator.canShare(shareData)) {
-        await navigator.share(shareData);
-        return;
-      }
-    } catch {
-      // Fall back to the standard download link below.
-    }
+export async function copyTextToClipboard(text: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
   }
 
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  const copied = document.execCommand("copy");
+  textarea.remove();
+
+  if (!copied) {
+    throw new Error("Copy failed");
+  }
+}
+
+export async function downloadImage(src: string, filename: string) {
+  try {
+    const response = await fetchDownloadSource(src);
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+
+    try {
+      triggerDownload(objectUrl, filename);
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    }
+    return;
+  } catch {
+    // Fall back to the standard download link below.
+  }
+
+  triggerDownload(src, filename);
+}
+
+function triggerDownload(href: string, filename: string) {
   const link = document.createElement("a");
-  link.href = src;
+  link.href = href;
   link.download = filename;
   link.rel = "noopener";
+  link.style.display = "none";
   document.body.appendChild(link);
   link.click();
   link.remove();

@@ -1,4 +1,6 @@
-export type ImageSize = "1024x1024";
+export type ImageSize = `${number}x${number}`;
+
+export type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "3:2" | "2:3" | "4:3" | "3:4" | "21:9";
 
 export type ImageResolution = "1k" | "2k" | "4k";
 

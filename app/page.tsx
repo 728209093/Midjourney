@@ -19,8 +19,15 @@ import {
 import { Header } from "@/components/Header";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { validateApiBaseUrl } from "@/lib/api-url";
-import { cn, downloadImage, getImageSrc } from "@/lib/utils";
+import {
+  IMAGE_ASPECT_RATIO_OPTIONS,
+  formatImageSize,
+  getImageSizeForAspectRatio,
+  inferAspectRatioFromSize,
+} from "@/lib/image-size";
+import { cn, copyTextToClipboard, downloadImage, getImageSrc } from "@/lib/utils";
 import type {
+  ImageAspectRatio,
   GenerateImageResponse,
   GeneratedImage,
   ImageApiConfig,
@@ -74,7 +81,7 @@ type SettingsMessage = {
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
-  const [size] = useState<ImageSize>("1024x1024");
+  const [aspectRatio, setAspectRatio] = useState<ImageAspectRatio>("1:1");
   const [resolution, setResolution] = useState<ImageResolution>("1k");
   const [quality, setQuality] = useState<ImageQuality>("medium");
   const [count, setCount] = useState(1);
@@ -93,11 +100,13 @@ export default function Home() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [referenceAction, setReferenceAction] = useState<"attach" | "replace">("attach");
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
+  const size = useMemo(() => getImageSizeForAspectRatio(aspectRatio), [aspectRatio]);
 
   const canGenerate = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading]);
 
@@ -326,6 +335,16 @@ export default function Home() {
     setTurns((current) => current.filter((turn) => turn.id !== id));
   }
 
+  async function handleCopyTurnPrompt(turn: ChatTurn) {
+    try {
+      await copyTextToClipboard(turn.prompt);
+      setCopiedTurnId(turn.id);
+      window.setTimeout(() => setCopiedTurnId((current) => (current === turn.id ? null : current)), 1400);
+    } catch {
+      setError("复制失败，请稍后重试。");
+    }
+  }
+
   function handleNewChat() {
     setSessionId(createChatSessionId());
     setTurns([]);
@@ -354,6 +373,10 @@ export default function Home() {
 
   function handleReuse(image: GeneratedImage) {
     setPrompt(image.prompt);
+    const reusableAspectRatio = inferAspectRatioFromSize(image.size);
+    if (reusableAspectRatio) {
+      setAspectRatio(reusableAspectRatio);
+    }
     setResolution(image.resolution || "1k");
     setQuality(image.quality);
     scrollToComposer();
@@ -423,9 +446,12 @@ export default function Home() {
         onClose={() => setSettingsOpen(false)}
       >
         <ParameterSettings
+          aspectRatio={aspectRatio}
+          size={size}
           resolution={resolution}
           count={count}
           loading={loading}
+          onAspectRatioChange={setAspectRatio}
           onResolutionChange={setResolution}
           onCountChange={setCount}
         />
@@ -445,11 +471,14 @@ export default function Home() {
                 <Avatar icon={<User className="size-4" aria-hidden />} />
                 <div className="max-w-[min(42rem,82vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
                   <p className="whitespace-pre-wrap text-sm leading-6">{turn.prompt}</p>
-                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2 text-[11px] text-ink/70">
-                    <span>{turn.mode === "edit" ? "图生图" : "文生图"}</span>
-                    <span>{turn.size}</span>
-                    <span>{turn.resolution.toUpperCase()}</span>
-                    <span>{turn.quality}</span>
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyTurnPrompt(turn)}
+                      className="text-xs text-ink/70 transition hover:text-ink"
+                    >
+                      {copiedTurnId === turn.id ? "已复制" : "复制文字"}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -503,6 +532,12 @@ export default function Home() {
 
         <section id="composer" className="mt-4 rounded-lg border border-white/10 bg-panel/80 p-3 shadow-soft">
           <form onSubmit={handleGenerate} className="space-y-3">
+            {error ? (
+              <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">
+                {error}
+              </div>
+            ) : null}
+
             {referencePreviewUrl ? (
               <div className="flex items-center gap-3 rounded-md border border-white/10 bg-white/[0.03] p-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -651,15 +686,21 @@ export default function Home() {
 }
 
 function ParameterSettings({
+  aspectRatio,
+  size,
   resolution,
   count,
   loading,
+  onAspectRatioChange,
   onResolutionChange,
   onCountChange,
 }: {
+  aspectRatio: ImageAspectRatio;
+  size: ImageSize;
   resolution: ImageResolution;
   count: number;
   loading: boolean;
+  onAspectRatioChange: (value: ImageAspectRatio) => void;
   onResolutionChange: (value: ImageResolution) => void;
   onCountChange: (value: number) => void;
 }) {
@@ -670,9 +711,45 @@ function ParameterSettings({
           <h2 className="text-sm font-semibold text-white">生成参数</h2>
           <p className="mt-1 text-xs text-stone-400">影响下一次发送的图片结果</p>
         </div>
+        <p className="text-xs text-stone-400">
+          当前尺寸 <span className="text-white">{formatImageSize(size)}</span>
+        </p>
       </div>
 
       <div className="space-y-4">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs text-stone-400">
+            <span>画幅比例</span>
+            <span className="text-white">{aspectRatio}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {IMAGE_ASPECT_RATIO_OPTIONS.map((item) => (
+              <button
+                key={item.ratio}
+                type="button"
+                onClick={() => onAspectRatioChange(item.ratio)}
+                disabled={loading}
+                className={cn(
+                  "rounded-md border px-2 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60",
+                  aspectRatio === item.ratio
+                    ? "border-mint bg-mint text-ink"
+                    : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50",
+                )}
+              >
+                <span className="block font-medium">{item.label}</span>
+                <span
+                  className={cn(
+                    "mt-1 block text-[11px]",
+                    aspectRatio === item.ratio ? "text-ink/75" : "text-stone-500",
+                  )}
+                >
+                  {formatImageSize(item.size)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="space-y-2">
           <p className="text-xs font-medium text-stone-300">分辨率</p>
           <div className="grid grid-cols-3 gap-2">

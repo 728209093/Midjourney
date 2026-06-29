@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Download, Eye, RefreshCw, Trash2, X } from "lucide-react";
+import { Download, Eye, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
 import { downloadImage, getImageSrc } from "@/lib/utils";
@@ -14,7 +14,6 @@ type ImageCardProps = {
 
 export function ImageCard({ image, onDelete, onReuse }: ImageCardProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
   const src = getImageSrc(image);
   const createdAt = new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
@@ -22,16 +21,6 @@ export function ImageCard({ image, onDelete, onReuse }: ImageCardProps) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(image.createdAt));
-
-  async function copyImageLink() {
-    if (!src) {
-      return;
-    }
-
-    await navigator.clipboard.writeText(src);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
-  }
 
   return (
     <>
@@ -59,7 +48,7 @@ export function ImageCard({ image, onDelete, onReuse }: ImageCardProps) {
             </p>
           </div>
 
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             <button
               type="button"
               onClick={() => downloadImage(src, `ai-image-${image.id}.png`)}
@@ -68,15 +57,6 @@ export function ImageCard({ image, onDelete, onReuse }: ImageCardProps) {
             >
               <Download className="size-4" aria-hidden />
               <span className="sr-only">下载</span>
-            </button>
-            <button
-              type="button"
-              onClick={copyImageLink}
-              className="grid size-9 place-items-center rounded-md border border-white/10 text-stone-300 transition hover:border-mint/50 hover:text-mint"
-              title={copied ? "已复制" : "复制链接"}
-            >
-              <Copy className="size-4" aria-hidden />
-              <span className="sr-only">{copied ? "已复制" : "复制链接"}</span>
             </button>
             <button
               type="button"

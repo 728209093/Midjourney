@@ -1,13 +1,15 @@
 import type {
+  ImageAspectRatio,
   ImageApiConfig,
   ImageGenerateParams,
   ImageQuality,
   ImageResolution,
   ImageSize,
 } from "@/types/image";
+import { normalizeImageSize } from "@/lib/image-size";
 import { validateApiBaseUrl } from "@/lib/api-url";
 
-export const IMAGE_SIZES: ImageSize[] = ["1024x1024"];
+export const IMAGE_ASPECT_RATIOS: ImageAspectRatio[] = ["1:1", "16:9", "9:16", "3:2", "2:3", "4:3", "3:4", "21:9"];
 export const IMAGE_RESOLUTIONS: ImageResolution[] = ["1k", "2k", "4k"];
 export const IMAGE_QUALITIES: ImageQuality[] = ["low", "medium", "high"];
 
@@ -25,7 +27,8 @@ export function validateGenerateRequest(input: unknown):
 
   const body = input as Record<string, unknown>;
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-  const size = body.size;
+  const sizeRaw = typeof body.size === "string" ? body.size : "";
+  const size = normalizeImageSize(sizeRaw) || sizeRaw;
   const resolution = typeof body.resolution === "string" ? body.resolution.toLowerCase() : "1k";
   const quality = body.quality;
   const n = typeof body.n === "number" ? body.n : Number(body.n);
@@ -38,8 +41,8 @@ export function validateGenerateRequest(input: unknown):
     return { ok: false, message: "图片描述不能超过 2000 个字符。" };
   }
 
-  if (!IMAGE_SIZES.includes(size as ImageSize)) {
-    return { ok: false, message: "图片尺寸仅支持 1024x1024。" };
+  if (!normalizeImageSize(sizeRaw)) {
+    return { ok: false, message: "图片尺寸格式不正确，需为 WIDTHxHEIGHT 且宽高需为 16 的倍数。" };
   }
 
   if (!IMAGE_RESOLUTIONS.includes(resolution as ImageResolution)) {

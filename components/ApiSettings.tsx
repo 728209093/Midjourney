@@ -24,7 +24,7 @@ export function ApiSettings({ value, onChange, onSave, onReset, disabled }: ApiS
   }
 
   return (
-    <section id="settings" className="rounded-lg border border-white/10 bg-panel/86 p-4 shadow-soft sm:p-5">
+    <section id="settings" className="rounded-lg border border-white/10 bg-panel/94 p-4 shadow-soft sm:p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-white">API 设置</h2>
@@ -42,7 +42,7 @@ export function ApiSettings({ value, onChange, onSave, onReset, disabled }: ApiS
             type="url"
             value="https://dahlo.live"
             disabled
-            className="h-11 w-full cursor-not-allowed rounded-md border border-white/10 bg-ink px-3 text-sm text-stone-400 opacity-60"
+            className="h-11 w-full cursor-not-allowed rounded-md border border-white/10 bg-ink px-3 text-sm text-stone-400 opacity-70"
           />
         </label>
 

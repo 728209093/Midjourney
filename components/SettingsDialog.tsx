@@ -42,7 +42,7 @@ export function SettingsDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/78 backdrop-blur-sm"
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/90 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       aria-label="设置"
@@ -52,11 +52,11 @@ export function SettingsDialog({
         className="mx-auto flex min-h-full w-full max-w-4xl items-stretch px-0 sm:items-center sm:px-4 sm:py-4"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-ink/96 sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-lg sm:border sm:border-white/10 sm:shadow-soft">
+        <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-ink sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-lg sm:border sm:border-white/10 sm:shadow-soft">
           <button
             type="button"
             onClick={onClose}
-            className="absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-md border border-white/10 bg-ink/80 text-stone-300 transition hover:border-mint/50 hover:text-mint"
+            className="absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-md border border-white/10 bg-ink text-stone-300 transition hover:border-mint/50 hover:text-mint"
             title="关闭"
           >
             <X className="size-4" aria-hidden />

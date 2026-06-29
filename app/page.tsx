@@ -100,12 +100,14 @@ export default function Home() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [referenceAction, setReferenceAction] = useState<"attach" | "replace">("attach");
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [ratioMenuOpen, setRatioMenuOpen] = useState(false);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
+  const ratioSelectRef = useRef<HTMLDivElement>(null);
   const size = useMemo(() => getImageSizeForAspectRatio(aspectRatio), [aspectRatio]);
 
   const canGenerate = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading]);
@@ -202,25 +204,33 @@ export default function Home() {
 
   // ESC 关闭设置弹窗
   useEffect(() => {
-    if (!settingsOpen) return;
+    if (!settingsOpen && !uploadMenuOpen && !ratioMenuOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSettingsOpen(false);
+      if (e.key === "Escape") {
+        setSettingsOpen(false);
+        setUploadMenuOpen(false);
+        setRatioMenuOpen(false);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen]);
+  }, [settingsOpen, uploadMenuOpen, ratioMenuOpen]);
 
-  // 点击菜单外部时收起上传菜单
+  // 点击菜单外部时收起菜单
   useEffect(() => {
-    if (!uploadMenuOpen) return;
+    if (!uploadMenuOpen && !ratioMenuOpen) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (uploadMenuRef.current && !uploadMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (uploadMenuOpen && uploadMenuRef.current && !uploadMenuRef.current.contains(target)) {
         setUploadMenuOpen(false);
+      }
+      if (ratioMenuOpen && ratioSelectRef.current && !ratioSelectRef.current.contains(target)) {
+        setRatioMenuOpen(false);
       }
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [uploadMenuOpen]);
+  }, [uploadMenuOpen, ratioMenuOpen]);
 
   const handleDownload = useCallback((image: GeneratedImage) => {
     const src = getImageSrc(image);
@@ -253,6 +263,8 @@ export default function Home() {
 
     setLoading(true);
     setError("");
+    setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setTurns((current) => [
       ...current,
       {
@@ -353,6 +365,8 @@ export default function Home() {
     setReferenceImageSource("");
     setReferencePreviewUrl("");
     setReferenceAction("attach");
+    setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setError("");
     scrollToComposer();
   }
@@ -364,6 +378,8 @@ export default function Home() {
     setReferenceImageSource("");
     setReferencePreviewUrl("");
     setReferenceAction("attach");
+    setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setError("");
   }
 
@@ -560,21 +576,62 @@ export default function Home() {
             ) : null}
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                disabled={loading}
-                maxLength={2000}
-                rows={2}
-                placeholder="输入你想生成或修改的画面..."
-                className="min-h-[92px] w-full flex-1 resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[56px]"
-              />
+              <div className="min-w-0 flex-1 space-y-3">
+                <textarea
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  disabled={loading}
+                  maxLength={2000}
+                  rows={2}
+                  placeholder="输入你想生成或修改的画面..."
+                  className="min-h-[92px] w-full resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[56px]"
+                />
+
+                <div className="flex flex-wrap items-center gap-2 text-xs text-stone-400">
+                  <span className="shrink-0">画幅</span>
+                  <div className="relative" ref={ratioSelectRef}>
+                    <button
+                      type="button"
+                      onClick={() => setRatioMenuOpen((current) => !current)}
+                      disabled={loading}
+                      className="inline-flex h-9 min-w-24 items-center justify-between gap-2 rounded-md border border-white/10 bg-white/[0.04] px-3 text-xs text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span>{aspectRatio}</span>
+                      <ChevronDown className="size-3.5 opacity-70" aria-hidden />
+                    </button>
+
+                    {ratioMenuOpen ? (
+                      <div className="absolute left-0 top-full z-20 mt-2 w-44 overflow-hidden rounded-md border border-white/10 bg-ink/98 shadow-soft">
+                        {IMAGE_ASPECT_RATIO_OPTIONS.map((option) => (
+                          <button
+                            key={option.ratio}
+                            type="button"
+                            onClick={() => {
+                              setAspectRatio(option.ratio);
+                              setRatioMenuOpen(false);
+                            }}
+                            disabled={loading}
+                            className={cn(
+                              "flex w-full items-center justify-between px-3 py-2 text-left text-sm transition hover:bg-white/[0.05]",
+                              aspectRatio === option.ratio ? "text-mint" : "text-stone-200",
+                            )}
+                          >
+                            <span>{option.ratio}</span>
+                            <span className="text-xs text-stone-500">{formatImageSize(option.size)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
               <div className="relative shrink-0 self-end sm:self-auto" ref={uploadMenuRef}>
                 <button
                   type="button"
@@ -705,7 +762,7 @@ function ParameterSettings({
   onCountChange: (value: number) => void;
 }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-panel/86 p-4 shadow-soft">
+    <section className="rounded-lg border border-white/10 bg-panel/94 p-4 shadow-soft">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-white">生成参数</h2>

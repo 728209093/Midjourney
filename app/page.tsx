@@ -429,7 +429,7 @@ export default function Home() {
   }
 
   return (
-    <main className="flex h-screen flex-col overflow-hidden">
+    <main className="flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto lg:h-screen lg:overflow-hidden">
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onNewChat={handleNewChat}
@@ -457,7 +457,7 @@ export default function Home() {
         />
       </SettingsDialog>
 
-      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 py-4 sm:px-6">
+      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-3 py-3 sm:px-6 sm:py-4">
         <section
           id="history"
           ref={chatRef}
@@ -559,7 +559,7 @@ export default function Home() {
               </div>
             ) : null}
 
-            <div className="flex items-end gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -573,15 +573,15 @@ export default function Home() {
                 maxLength={2000}
                 rows={2}
                 placeholder="输入你想生成或修改的画面..."
-                className="min-h-[56px] flex-1 resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
+                className="min-h-[92px] w-full flex-1 resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[56px]"
               />
-              <div className="relative shrink-0" ref={uploadMenuRef}>
+              <div className="relative shrink-0 self-end sm:self-auto" ref={uploadMenuRef}>
                 <button
                   type="button"
                   onClick={() => setUploadMenuOpen((current) => !current)}
                   disabled={loading}
                   className={cn(
-                    "inline-flex h-14 w-14 items-center justify-center rounded-md border transition",
+                    "inline-flex h-12 w-12 items-center justify-center rounded-md border transition sm:h-14 sm:w-14",
                     referencePreviewUrl
                       ? "border-mint/50 bg-mint/10 text-mint hover:bg-mint hover:text-ink"
                       : "border-white/10 bg-white/[0.04] text-stone-200 hover:border-mint/50 hover:text-mint",
@@ -644,7 +644,7 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={!canGenerate}
-                className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300"
+                className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300 sm:h-14 sm:w-14"
                 title="发送"
               >
                 {loading ? (
@@ -669,7 +669,7 @@ export default function Home() {
         <button
           type="button"
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: "smooth" })}
-          className="fixed bottom-28 right-4 z-30 inline-flex items-center gap-2 rounded-full border border-white/10 bg-ink/90 px-4 py-2 text-sm text-white shadow-soft backdrop-blur"
+          className="fixed bottom-28 right-4 z-30 hidden items-center gap-2 rounded-full border border-white/10 bg-ink/90 px-4 py-2 text-sm text-white shadow-soft backdrop-blur sm:inline-flex"
         >
           <ChevronDown className="size-4" aria-hidden />
           回到底部

@@ -143,6 +143,8 @@ export default function Home() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [referenceDragging, setReferenceDragging] = useState(false);
@@ -151,6 +153,8 @@ export default function Home() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
+  const aspectMenuRef = useRef<HTMLDivElement>(null);
+  const qualityMenuRef = useRef<HTMLDivElement>(null);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || sessions[0] || createBlankSession(),
@@ -279,17 +283,19 @@ export default function Home() {
   }, [activeSession.turns, loading, activeSessionId]);
 
   useEffect(() => {
-    if (!settingsOpen && !uploadMenuOpen) return;
+    if (!settingsOpen && !uploadMenuOpen && !aspectMenuOpen && !qualityMenuOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSettingsOpen(false);
         setUploadMenuOpen(false);
+        setAspectMenuOpen(false);
+        setQualityMenuOpen(false);
         setEditingSessionId(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen, uploadMenuOpen]);
+  }, [settingsOpen, uploadMenuOpen, aspectMenuOpen, qualityMenuOpen]);
 
   useEffect(() => {
     if (!uploadMenuOpen) return;
@@ -302,6 +308,21 @@ export default function Home() {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [uploadMenuOpen]);
+
+  useEffect(() => {
+    if (!aspectMenuOpen && !qualityMenuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (aspectMenuOpen && aspectMenuRef.current && !aspectMenuRef.current.contains(target)) {
+        setAspectMenuOpen(false);
+      }
+      if (qualityMenuOpen && qualityMenuRef.current && !qualityMenuRef.current.contains(target)) {
+        setQualityMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [aspectMenuOpen, qualityMenuOpen]);
 
   const handleDownload = useCallback((image: GeneratedImage) => {
     const src = getImageSrc(image);
@@ -687,8 +708,8 @@ export default function Home() {
         onClose={() => setSettingsOpen(false)}
       />
 
-      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-4 px-4 pb-4 pt-20 sm:px-6 lg:flex-row">
-        <aside className="min-h-0 w-full shrink-0 overflow-hidden rounded-lg border border-white/10 bg-panel/55 shadow-soft lg:w-80">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1840px] flex-1 flex-col gap-4 px-4 pb-4 pt-20 sm:px-6 xl:px-8 lg:flex-row">
+        <aside className="min-h-0 w-full shrink-0 overflow-hidden rounded-lg border border-white/10 bg-panel/55 shadow-soft lg:w-80 xl:w-84">
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
             <div>
               <h2 className="text-sm font-semibold text-white">聊天分组</h2>
@@ -798,7 +819,7 @@ export default function Home() {
           <section
             id="history"
             ref={chatRef}
-            className="min-h-0 flex-1 space-y-5 overflow-y-auto rounded-lg border border-white/10 bg-panel/55 p-4 shadow-soft"
+            className="min-h-0 flex-1 space-y-5 overflow-y-auto rounded-lg border border-white/10 bg-panel/55 p-4 pb-[30rem] shadow-soft lg:pb-4"
           >
             {activeSession.turns.length === 0 ? <EmptyChatState /> : null}
 
@@ -806,7 +827,7 @@ export default function Home() {
               <article key={turn.id} className="space-y-3">
                 <div className="flex flex-row-reverse items-start gap-3">
                   <Avatar icon={<User className="size-4" aria-hidden />} />
-                  <div className="max-w-[min(42rem,82vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
+                  <div className="max-w-[min(60rem,92vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
                     <p className="select-text whitespace-pre-wrap text-sm leading-6 selection:bg-ink selection:text-white">{turn.prompt}</p>
                     <div className="mt-2 flex items-center justify-end gap-2">
                       <button
@@ -824,8 +845,8 @@ export default function Home() {
                   <Avatar icon={<Bot className="size-4" aria-hidden />} />
                   <div
                     className={cn(
-                      "min-w-0 max-w-[min(56rem,86vw)] rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
-                      turn.status === "loading" ? "w-fit" : "flex-1",
+                    "min-w-0 rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
+                      turn.status === "loading" ? "w-fit" : "w-full",
                     )}
                   >
                     {turn.status === "loading" ? <LoadingBubble count={activeSession.draft.count} /> : null}
@@ -835,7 +856,7 @@ export default function Home() {
                         <p className="text-xs text-stone-400">
                           已生成 {turn.images.length > 0 ? turn.images.length : turn.imageCount || 0} 张图片
                         </p>
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                           {turn.images.map((image) => (
                             <GeneratedImageCard
                               key={image.id}
@@ -867,13 +888,20 @@ export default function Home() {
             <div ref={bottomRef} />
           </section>
 
-          <section id="composer" className="rounded-lg border border-white/10 bg-panel/80 p-3 shadow-soft">
-            <form onSubmit={handleGenerate} className="space-y-3">
+          <section
+            id="composer"
+            className="sticky bottom-2 z-30 rounded-lg border border-white/10 bg-panel/90 p-3 shadow-soft backdrop-blur lg:static lg:bottom-auto lg:z-auto lg:bg-panel/80"
+          >
+            <form
+              onSubmit={handleGenerate}
+              className="grid gap-3 grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] max-[380px]:grid-cols-1 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,23rem)] lg:items-start"
+            >
               {error ? (
-                <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">{error}</div>
+                <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100 lg:col-span-2">{error}</div>
               ) : null}
 
-              {referencePreviewUrl ? (
+              <div className="space-y-3 min-w-0">
+                {referencePreviewUrl ? (
                 <div
                   className={cn(
                     "rounded-md border p-2 transition",
@@ -961,7 +989,6 @@ export default function Home() {
                 </label>
               )}
 
-              <div className="space-y-3">
                 <textarea
                   value={activeSession.draft.prompt}
                   onChange={(event) =>
@@ -982,14 +1009,55 @@ export default function Home() {
                   placeholder="输入你想生成或修改的画面..."
                   className="min-h-[72px] w-full resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
                 />
+              </div>
 
-                <div className="grid gap-3 lg:grid-cols-[1.8fr_1fr]">
-                  <div className="space-y-2 rounded-md border border-white/10 bg-white/[0.03] p-3">
+              <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.03] p-3 sm:p-4">
+                <div className="grid grid-cols-2 gap-2">
+                    <div className="col-span-2 space-y-2">
                     <div className="flex items-center justify-between text-xs text-stone-400">
                       <span>画幅</span>
-                      <span className="text-white">{selectedAspectOption.label} · {selectedAspectOption.detail}</span>
+                      <span className="text-white">
+                        {selectedAspectOption.label} · {selectedAspectOption.detail}
+                      </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <div className="sm:hidden" ref={aspectMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setAspectMenuOpen((current) => !current)}
+                        disabled={loading}
+                        className="flex h-11 w-full items-center justify-between rounded-md border border-white/10 bg-ink px-3 text-sm text-white transition hover:border-mint/50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <span className="truncate">{selectedAspectOption.label}</span>
+                        <ChevronDown className="size-4 shrink-0 text-stone-400" aria-hidden />
+                      </button>
+                      {aspectMenuOpen ? (
+                        <div className="mt-2 max-h-60 overflow-auto rounded-md border border-white/10 bg-ink/98 p-1 shadow-soft">
+                          {ASPECT_OPTIONS.map((item) => (
+                            <button
+                              key={item.size}
+                              type="button"
+                              onClick={() => {
+                                setActiveSessionDraft((draft) => ({
+                                  ...draft,
+                                  size: item.size,
+                                }));
+                                setAspectMenuOpen(false);
+                              }}
+                              className={cn(
+                                "flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition",
+                                activeSession.draft.size === item.size
+                                  ? "bg-mint text-ink"
+                                  : "text-stone-200 hover:bg-white/[0.05]",
+                              )}
+                            >
+                              <span className="font-medium">{item.label}</span>
+                              <span className="text-xs opacity-70">{item.detail}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="hidden gap-2 sm:grid sm:grid-cols-2 xl:grid-cols-4">
                       {ASPECT_OPTIONS.map((item) => (
                         <AspectChip
                           key={item.size}
@@ -1007,8 +1075,8 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
-                    <div className="space-y-2">
+                  <div className="col-span-2 grid grid-cols-2 gap-2">
+                    <div className="space-y-2 min-w-0">
                       <div className="flex items-center justify-between text-xs text-stone-400">
                         <span>分辨率</span>
                         <span className="text-white">{activeSession.draft.resolution.toUpperCase()}</span>
@@ -1032,14 +1100,51 @@ export default function Home() {
                       </select>
                     </div>
 
-                    <div className="space-y-2">
+                    <div className="space-y-2 min-w-0">
                       <div className="flex items-center justify-between text-xs text-stone-400">
                         <span>质量</span>
                         <span className="text-white">
                           {QUALITY_OPTIONS.find((item) => item.value === activeSession.draft.quality)?.label || "中"}
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="sm:hidden" ref={qualityMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setQualityMenuOpen((current) => !current)}
+                          disabled={loading}
+                          className="flex h-11 w-full items-center justify-between rounded-md border border-white/10 bg-ink px-3 text-sm text-white transition hover:border-mint/50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <span>{QUALITY_OPTIONS.find((item) => item.value === activeSession.draft.quality)?.label || "中"}</span>
+                          <ChevronDown className="size-4 shrink-0 text-stone-400" aria-hidden />
+                        </button>
+                        {qualityMenuOpen ? (
+                          <div className="mt-2 overflow-hidden rounded-md border border-white/10 bg-ink/98 p-1 shadow-soft">
+                            {QUALITY_OPTIONS.map((item) => (
+                              <button
+                                key={item.value}
+                                type="button"
+                                onClick={() => {
+                                  setActiveSessionDraft((draft) => ({
+                                    ...draft,
+                                    quality: item.value,
+                                  }));
+                                  setQualityMenuOpen(false);
+                                }}
+                                className={cn(
+                                  "flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition",
+                                  activeSession.draft.quality === item.value
+                                    ? "bg-mint text-ink"
+                                    : "text-stone-200 hover:bg-white/[0.05]",
+                                )}
+                              >
+                                <span className="font-medium">{item.label}</span>
+                                <span className="text-xs opacity-70">{item.value.toUpperCase()}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="hidden grid-cols-3 gap-2 sm:grid">
                         {QUALITY_OPTIONS.map((item) => (
                           <button
                             key={item.value}
@@ -1064,7 +1169,7 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
+                    <div className="col-span-2 space-y-2">
                       <div className="flex items-center justify-between text-xs text-stone-400">
                         <span>数量</span>
                         <span className="text-white">{activeSession.draft.count}</span>
@@ -1088,7 +1193,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="flex items-end gap-3">
+              <div className="flex items-end justify-end gap-3 lg:col-span-2">
                 <div className="relative shrink-0" ref={uploadMenuRef}>
                   <button
                     type="button"

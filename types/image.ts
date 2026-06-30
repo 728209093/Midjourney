@@ -10,6 +10,8 @@ export type ImageSize =
 
 export type ImageResolution = "1k" | "2k" | "4k";
 
+export type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "3:2" | "2:3" | "4:3" | "3:4" | "21:9";
+
 export type ImageQuality = "low" | "medium" | "high";
 
 export type ImageMode = "generate" | "edit";

@@ -19,15 +19,10 @@ import {
 import { Header } from "@/components/Header";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { validateApiBaseUrl } from "@/lib/api-url";
-import {
-  IMAGE_ASPECT_RATIO_OPTIONS,
-  formatImageSize,
-  getImageSizeForAspectRatio,
-  inferAspectRatioFromSize,
-} from "@/lib/image-size";
+import { deleteImagesFromHistory, getImagesFromHistory, saveImagesToHistory } from "@/lib/image-history-db";
+import { formatImageSize, parseImageSize } from "@/lib/image-size";
 import { cn, copyTextToClipboard, downloadImage, getImageSrc } from "@/lib/utils";
 import type {
-  ImageAspectRatio,
   GenerateImageResponse,
   GeneratedImage,
   ImageApiConfig,
@@ -62,6 +57,7 @@ type ChatTurn = {
   id: string;
   prompt: string;
   images: GeneratedImage[];
+  imageIds?: string[];
   mode: ImageMode;
   size: ImageSize;
   resolution: ImageResolution;
@@ -69,9 +65,10 @@ type ChatTurn = {
   createdAt: string;
   status: "done" | "loading" | "error";
   error?: string;
+  imageCount?: number;
 };
 
-type PersistedChatTurn = Omit<ChatTurn, "images"> & {
+type PersistedChatTurn = Omit<ChatTurn, "images" | "imageCount"> & {
   imageCount: number;
 };
 
@@ -111,15 +108,12 @@ export default function Home() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [referenceAction, setReferenceAction] = useState<"attach" | "replace">("attach");
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
-  const [ratioMenuOpen, setRatioMenuOpen] = useState(false);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
-  const ratioSelectRef = useRef<HTMLDivElement>(null);
-  const size = useMemo(() => getImageSizeForAspectRatio(aspectRatio), [aspectRatio]);
 
   const canGenerate = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading]);
 
@@ -136,55 +130,70 @@ export default function Home() {
   }, [referenceImage, referenceImageSource]);
 
   useEffect(() => {
-    try {
-      const rawStore = window.localStorage.getItem(CHAT_STORE_KEY);
-      if (rawStore) {
-        const store = JSON.parse(rawStore) as { activeSessionId?: string; sessions?: ChatSession[] };
-        const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
-        const activeSessionId =
-          typeof store?.activeSessionId === "string" ? store.activeSessionId : sessions[0]?.id;
-        const activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0];
+    let cancelled = false;
 
-        if (activeSession) {
-          setSessionId(activeSession.id);
-          // 从持久化格式还原：images 为空数组（图片内容不再缓存到 localStorage）
-          setTurns(
-            activeSession.turns.slice(0, MAX_HISTORY_ITEMS).map((turn) => ({
-              ...turn,
-              images: [],
-              status: "done" as const,
-            })),
-          );
-        }
-      } else {
-        const rawHistory = window.localStorage.getItem(HISTORY_KEY);
-        if (rawHistory) {
-          const history = JSON.parse(rawHistory) as PersistedChatTurn[];
-          if (Array.isArray(history)) {
-            setTurns(history.slice(0, MAX_HISTORY_ITEMS).map((turn) => ({ ...turn, images: [] })));
+    async function loadLocalState() {
+      try {
+        const rawStore = window.localStorage.getItem(CHAT_STORE_KEY);
+        if (rawStore) {
+          const store = JSON.parse(rawStore) as { activeSessionId?: string; sessions?: ChatSession[] };
+          const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
+          const activeSessionId =
+            typeof store?.activeSessionId === "string" ? store.activeSessionId : sessions[0]?.id;
+          const activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0];
+
+          if (activeSession) {
+            const hydratedTurns = await hydratePersistedTurns(activeSession.turns.slice(0, MAX_HISTORY_ITEMS));
+            if (cancelled) {
+              return;
+            }
+
+            setSessionId(activeSession.id);
+            setTurns(hydratedTurns);
+          }
+        } else {
+          const rawHistory = window.localStorage.getItem(HISTORY_KEY);
+          if (rawHistory) {
+            const history = JSON.parse(rawHistory) as PersistedChatTurn[];
+            if (Array.isArray(history)) {
+              const hydratedTurns = await hydratePersistedTurns(history.slice(0, MAX_HISTORY_ITEMS));
+              if (cancelled) {
+                return;
+              }
+
+              setTurns(hydratedTurns);
+            }
           }
         }
+      } catch {
+        window.localStorage.removeItem(CHAT_STORE_KEY);
+        window.localStorage.removeItem(HISTORY_KEY);
       }
-    } catch {
-      window.localStorage.removeItem(CHAT_STORE_KEY);
-      window.localStorage.removeItem(HISTORY_KEY);
+
+      try {
+        const rawConfig = window.localStorage.getItem(API_CONFIG_KEY);
+        if (rawConfig && !cancelled) {
+          const config = JSON.parse(rawConfig) as Partial<ImageApiConfig>;
+          setApiConfig({
+            apiUrl: typeof config.apiUrl === "string" ? config.apiUrl : "",
+            apiKey: typeof config.apiKey === "string" ? config.apiKey : "",
+            model: typeof config.model === "string" && config.model ? config.model : "gpt-image-2",
+          });
+        }
+      } catch {
+        window.localStorage.removeItem(API_CONFIG_KEY);
+      }
+
+      if (!cancelled) {
+        setHistoryLoaded(true);
+      }
     }
 
-    setHistoryLoaded(true);
+    void loadLocalState();
 
-    try {
-      const rawConfig = window.localStorage.getItem(API_CONFIG_KEY);
-      if (rawConfig) {
-        const config = JSON.parse(rawConfig) as Partial<ImageApiConfig>;
-        setApiConfig({
-          apiUrl: typeof config.apiUrl === "string" ? config.apiUrl : "",
-          apiKey: typeof config.apiKey === "string" ? config.apiKey : "",
-          model: typeof config.model === "string" && config.model ? config.model : "gpt-image-2",
-        });
-      }
-    } catch {
-      window.localStorage.removeItem(API_CONFIG_KEY);
-    }
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -215,33 +224,29 @@ export default function Home() {
 
   // ESC 关闭设置弹窗
   useEffect(() => {
-    if (!settingsOpen && !uploadMenuOpen && !ratioMenuOpen) return;
+    if (!settingsOpen && !uploadMenuOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSettingsOpen(false);
         setUploadMenuOpen(false);
-        setRatioMenuOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen, uploadMenuOpen, ratioMenuOpen]);
+  }, [settingsOpen, uploadMenuOpen]);
 
   // 点击菜单外部时收起菜单
   useEffect(() => {
-    if (!uploadMenuOpen && !ratioMenuOpen) return;
+    if (!uploadMenuOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
       if (uploadMenuOpen && uploadMenuRef.current && !uploadMenuRef.current.contains(target)) {
         setUploadMenuOpen(false);
       }
-      if (ratioMenuOpen && ratioSelectRef.current && !ratioSelectRef.current.contains(target)) {
-        setRatioMenuOpen(false);
-      }
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [uploadMenuOpen, ratioMenuOpen]);
+  }, [uploadMenuOpen]);
 
   const handleDownload = useCallback((image: GeneratedImage) => {
     const src = getImageSrc(image);
@@ -262,12 +267,14 @@ export default function Home() {
     const createdAt = new Date().toISOString();
     const promptText = prompt.trim();
     const effectiveMode: ImageMode = referenceImage || referenceImageSource ? "edit" : "generate";
+    const dataReference = referenceImageSource.startsWith("data:");
+    const referenceImageUrl = !referenceImage && referenceImageSource && !dataReference ? referenceImageSource : "";
     const editImage =
-      effectiveMode === "edit"
-        ? referenceImage || (referenceImageSource ? await buildReferenceFileFromSource(referenceImageSource) : null)
-        : null;
+      effectiveMode === "edit" && dataReference
+        ? referenceImage || (await buildReferenceFileFromSource(referenceImageSource))
+        : referenceImage;
 
-    if (effectiveMode === "edit" && !editImage) {
+    if (effectiveMode === "edit" && !editImage && !referenceImageUrl) {
       setError("参考图暂时读取失败，请重新选择图片后再试。");
       return;
     }
@@ -275,7 +282,6 @@ export default function Home() {
     setLoading(true);
     setError("");
     setUploadMenuOpen(false);
-    setRatioMenuOpen(false);
     setTurns((current) => [
       ...current,
       {
@@ -294,7 +300,7 @@ export default function Home() {
     try {
       const apiConfigPayload = normalizeApiConfig(apiConfig);
       const response =
-        effectiveMode === "edit" && editImage
+        effectiveMode === "edit"
           ? await fetch("/api/generate-image", {
               method: "POST",
               headers: { Accept: "application/json" },
@@ -307,6 +313,7 @@ export default function Home() {
                 count,
                 apiConfig: apiConfigPayload,
                 image: editImage,
+                referenceImageUrl,
               }),
             })
           : await fetch("/api/generate-image", {
@@ -332,9 +339,17 @@ export default function Home() {
         throw new Error(data.message);
       }
 
+      try {
+        await saveImagesToHistory(data.images);
+      } catch (storageError) {
+        console.warn("[image-history] failed to save generated images", storageError);
+      }
+
       setTurns((current) =>
         current.map((turn) =>
-          turn.id === turnId ? { ...turn, images: data.images, status: "done" } : turn,
+          turn.id === turnId
+            ? { ...turn, images: data.images, imageIds: data.images.map((image) => image.id), status: "done" }
+            : turn,
         ),
       );
 
@@ -344,7 +359,7 @@ export default function Home() {
       }
       setPrompt("");
     } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "图片生成失败，请稍后重试。";
+      const message = getFriendlyGenerateErrorMessage(requestError);
       setTurns((current) =>
         current.map((turn) => (turn.id === turnId ? { ...turn, status: "error", error: message } : turn)),
       );
@@ -355,7 +370,16 @@ export default function Home() {
   }
 
   function handleDeleteTurn(id: string) {
-    setTurns((current) => current.filter((turn) => turn.id !== id));
+    setTurns((current) => {
+      const target = current.find((turn) => turn.id === id);
+      if (target) {
+        void deleteImagesFromHistory(getImageIdsFromTurn(target)).catch((storageError) => {
+          console.warn("[image-history] failed to delete turn images", storageError);
+        });
+      }
+
+      return current.filter((turn) => turn.id !== id);
+    });
   }
 
   async function handleCopyTurnPrompt(turn: ChatTurn) {
@@ -377,20 +401,24 @@ export default function Home() {
     setReferencePreviewUrl("");
     setReferenceAction("attach");
     setUploadMenuOpen(false);
-    setRatioMenuOpen(false);
     setError("");
     scrollToComposer();
   }
 
   function handleClearChat() {
-    setTurns([]);
+    setTurns((current) => {
+      void deleteImagesFromHistory(getImageIdsFromTurns(current)).catch((storageError) => {
+        console.warn("[image-history] failed to clear chat images", storageError);
+      });
+
+      return [];
+    });
     setPrompt("");
     setReferenceImage(null);
     setReferenceImageSource("");
     setReferencePreviewUrl("");
     setReferenceAction("attach");
     setUploadMenuOpen(false);
-    setRatioMenuOpen(false);
     setError("");
   }
 
@@ -408,11 +436,17 @@ export default function Home() {
 
   async function handleContinueEdit(image: GeneratedImage) {
     const src = getImageSrc(image);
-    const file = await buildReferenceFileFromImage(image, src);
+    if (!src) {
+      setError("这张图片暂时没有可用的参考图地址，请换一张图片再试。");
+      return;
+    }
+
+    const file = image.base64 || src.startsWith("data:") ? await buildReferenceFileFromImage(image, src) : null;
     setReferenceAction("attach");
     setReferenceImageSource(src);
     setReferenceImage(file);
     setReferencePreviewUrl(src);
+    setError("");
     scrollToComposer();
   }
 
@@ -493,7 +527,9 @@ export default function Home() {
               <div className="flex flex-row-reverse items-start gap-3">
                 <Avatar icon={<User className="size-4" aria-hidden />} />
                 <div className="max-w-[min(42rem,82vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
-                  <p className="whitespace-pre-wrap text-sm leading-6">{turn.prompt}</p>
+                  <p className="select-text whitespace-pre-wrap text-sm leading-6 selection:bg-ink selection:text-white">
+                    {turn.prompt}
+                  </p>
                   <div className="mt-2 flex items-center justify-end gap-2">
                     <button
                       type="button"
@@ -580,12 +616,6 @@ export default function Home() {
                   移除
                 </button>
               </div>
-            ) : null}
-
-            {error ? (
-              <p className="rounded-md border border-coral/40 bg-coral/[0.12] px-3 py-2 text-xs leading-5 text-coral" role="alert">
-                {error}
-              </p>
             ) : null}
 
             <div className="flex items-end gap-3">
@@ -914,6 +944,8 @@ function GeneratedImageCard({
   onDownload: (image: GeneratedImage) => void;
 }) {
   const src = getImageSrc(image);
+  const imageSize = parseImageSize(image.size);
+  const thumbnailAspectRatio = imageSize ? `${imageSize.width} / ${imageSize.height}` : "1 / 1";
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
 
@@ -924,13 +956,14 @@ function GeneratedImageCard({
         onClick={() => onPreview(image)}
         className="relative block w-full text-left transition hover:bg-white/[0.04]"
         title="预览大图"
+        style={{ aspectRatio: thumbnailAspectRatio }}
       >
         {/* 加载占位骨架 */}
         {!imgLoaded && !imgError ? (
-          <div className="aspect-square w-full animate-pulse rounded-t-lg bg-white/[0.06]" />
+          <div className="absolute inset-0 animate-pulse rounded-t-lg bg-white/[0.06]" />
         ) : null}
         {imgError ? (
-          <div className="grid aspect-square w-full place-items-center rounded-t-lg bg-white/[0.04] text-xs text-stone-500">
+          <div className="absolute inset-0 grid place-items-center rounded-t-lg bg-white/[0.04] text-xs text-stone-500">
             图片加载失败
           </div>
         ) : null}
@@ -939,7 +972,7 @@ function GeneratedImageCard({
           src={src}
           alt={image.prompt}
           className={cn(
-            "aspect-square w-full object-cover transition-opacity duration-300",
+            "h-full w-full object-cover transition-opacity duration-300",
             imgLoaded ? "opacity-100" : "absolute inset-0 opacity-0",
           )}
           onLoad={() => setImgLoaded(true)}
@@ -1109,6 +1142,7 @@ function buildImageEditFormData({
   count,
   apiConfig,
   image,
+  referenceImageUrl,
 }: {
   prompt: string;
   size: ImageSize;
@@ -1116,7 +1150,8 @@ function buildImageEditFormData({
   quality: ImageQuality;
   count: number;
   apiConfig: Partial<ImageApiConfig>;
-  image: File;
+  image: File | null;
+  referenceImageUrl?: string;
 }) {
   const formData = new FormData();
   formData.append("prompt", prompt);
@@ -1125,15 +1160,21 @@ function buildImageEditFormData({
   formData.append("quality", quality);
   formData.append("n", String(count));
   formData.append("apiConfig", JSON.stringify(apiConfig));
-  formData.append("image", image);
+  if (image) {
+    formData.append("image", image);
+  }
+  if (referenceImageUrl) {
+    formData.append("referenceImageUrl", referenceImageUrl);
+  }
   return formData;
 }
 
 function persistChatStore(activeSessionId: string, turns: ChatTurn[]) {
-  // 只持久化元数据，不存储 base64/url 内容，避免撑爆 localStorage quota
+  // 图片本体存 IndexedDB，这里只保留恢复图片所需的 ID 和对话元数据。
   const persistedTurns: PersistedChatTurn[] = turns.slice(0, MAX_HISTORY_ITEMS).map(({ images, ...rest }) => ({
     ...rest,
-    imageCount: images.length,
+    imageCount: images.length || rest.imageIds?.length || rest.imageCount || 0,
+    imageIds: rest.imageIds?.length ? rest.imageIds : images.map((image) => image.id),
   }));
 
   const nextSession: ChatSession = {
@@ -1164,6 +1205,38 @@ function persistChatStore(activeSessionId: string, turns: ChatTurn[]) {
 
     window.localStorage.removeItem(CHAT_STORE_KEY);
   }
+}
+
+async function hydratePersistedTurns(turns: PersistedChatTurn[]): Promise<ChatTurn[]> {
+  return Promise.all(
+    turns.map(async ({ imageIds, imageCount, ...turn }) => {
+      let images: GeneratedImage[] = [];
+
+      if (Array.isArray(imageIds) && imageIds.length > 0) {
+        try {
+          images = await getImagesFromHistory(imageIds);
+        } catch (error) {
+          console.warn("[image-history] failed to restore images", error);
+        }
+      }
+
+      return {
+        ...turn,
+        imageIds,
+        images,
+        status: turn.status === "error" ? "error" : ("done" as const),
+        imageCount,
+      } as ChatTurn & { imageCount: number };
+    }),
+  );
+}
+
+function getImageIdsFromTurns(turns: ChatTurn[]) {
+  return turns.flatMap(getImageIdsFromTurn);
+}
+
+function getImageIdsFromTurn(turn: ChatTurn) {
+  return turn.imageIds?.length ? turn.imageIds : turn.images.map((image) => image.id);
 }
 
 function isStorageQuotaError(error: unknown) {
@@ -1233,6 +1306,11 @@ async function buildReferenceFileFromSource(src: string) {
     return null;
   }
 
+  if (src.startsWith("data:")) {
+    const blob = base64ToBlob(src);
+    return new File([blob], "reference.png", { type: blob.type || "image/png" });
+  }
+
   try {
     const response = await fetch(`/api/image-proxy?url=${encodeURIComponent(src)}`);
     if (!response.ok) {
@@ -1256,6 +1334,26 @@ function base64ToBlob(input: string) {
   }
 
   return new Blob([bytes], { type: "image/png" });
+}
+
+function getFriendlyGenerateErrorMessage(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "图片生成失败，请稍后重试。";
+  }
+
+  const message = error.message.trim();
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized === "failed to fetch" ||
+    normalized.includes("fetch failed") ||
+    normalized.includes("networkerror") ||
+    normalized.includes("load failed")
+  ) {
+    return "网络请求失败，可能是参考图地址暂时不可访问。请重试一次，或重新选择/上传参考图。";
+  }
+
+  return message || "图片生成失败，请稍后重试。";
 }
 
 async function parseGenerateImageResponse(response: Response): Promise<GenerateImageResponse> {

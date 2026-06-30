@@ -108,14 +108,20 @@ export default function Home() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [referenceAction, setReferenceAction] = useState<"attach" | "replace">("attach");
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [ratioMenuOpen, setRatioMenuOpen] = useState(false);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
+  const ratioMenuRef = useRef<HTMLDivElement>(null);
 
   const canGenerate = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading]);
+  const selectedAspectOption = useMemo(
+    () => ASPECT_OPTIONS.find((option) => option.size === size) || ASPECT_OPTIONS[0],
+    [size],
+  );
 
   useEffect(() => {
     if (!referenceImage) {
@@ -224,29 +230,33 @@ export default function Home() {
 
   // ESC 关闭设置弹窗
   useEffect(() => {
-    if (!settingsOpen && !uploadMenuOpen) return;
+    if (!settingsOpen && !uploadMenuOpen && !ratioMenuOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSettingsOpen(false);
         setUploadMenuOpen(false);
+        setRatioMenuOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen, uploadMenuOpen]);
+  }, [settingsOpen, uploadMenuOpen, ratioMenuOpen]);
 
   // 点击菜单外部时收起菜单
   useEffect(() => {
-    if (!uploadMenuOpen) return;
+    if (!uploadMenuOpen && !ratioMenuOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
       if (uploadMenuOpen && uploadMenuRef.current && !uploadMenuRef.current.contains(target)) {
         setUploadMenuOpen(false);
       }
+      if (ratioMenuOpen && ratioMenuRef.current && !ratioMenuRef.current.contains(target)) {
+        setRatioMenuOpen(false);
+      }
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [uploadMenuOpen]);
+  }, [uploadMenuOpen, ratioMenuOpen]);
 
   const handleDownload = useCallback((image: GeneratedImage) => {
     const src = getImageSrc(image);
@@ -282,6 +292,7 @@ export default function Home() {
     setLoading(true);
     setError("");
     setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setTurns((current) => [
       ...current,
       {
@@ -401,6 +412,7 @@ export default function Home() {
     setReferencePreviewUrl("");
     setReferenceAction("attach");
     setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setError("");
     scrollToComposer();
   }
@@ -419,6 +431,7 @@ export default function Home() {
     setReferencePreviewUrl("");
     setReferenceAction("attach");
     setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setError("");
   }
 
@@ -715,8 +728,50 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-400">
-              <button type="button" onClick={() => setSettingsOpen(true)} className="transition hover:text-mint">
+            <div className="flex flex-col gap-2 text-xs text-stone-400 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative w-full sm:w-auto" ref={ratioMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setRatioMenuOpen((current) => !current)}
+                  disabled={loading}
+                  className="flex h-10 w-full min-w-0 items-center justify-between gap-3 rounded-md border border-white/10 bg-white/[0.04] px-3 text-left text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60 sm:w-48"
+                  title="选择画幅"
+                >
+                  <span className="min-w-0 truncate">
+                    画幅 {selectedAspectOption.label}
+                    <span className="ml-2 text-stone-500">{selectedAspectOption.detail}</span>
+                  </span>
+                  <ChevronDown className="size-4 shrink-0" aria-hidden />
+                </button>
+
+                {ratioMenuOpen ? (
+                  <div className="absolute bottom-full left-0 z-20 mb-2 grid w-full min-w-0 grid-cols-2 gap-1 rounded-md border border-white/10 bg-ink/95 p-1 shadow-soft sm:w-72">
+                    {ASPECT_OPTIONS.map((item) => (
+                      <button
+                        key={item.size}
+                        type="button"
+                        onClick={() => {
+                          setSize(item.size);
+                          setRatioMenuOpen(false);
+                        }}
+                        className={cn(
+                          "flex min-w-0 items-center justify-between gap-2 rounded px-2 py-2 text-left transition",
+                          size === item.size
+                            ? "bg-mint text-ink"
+                            : "text-stone-300 hover:bg-white/[0.06] hover:text-white",
+                        )}
+                      >
+                        <span className="shrink-0 font-medium">{item.label}</span>
+                        <span className={cn("truncate text-[11px]", size === item.size ? "text-ink/65" : "text-stone-500")}>
+                          {item.detail}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              <button type="button" onClick={() => setSettingsOpen(true)} className="w-fit transition hover:text-mint">
                 参数设置
               </button>
             </div>

@@ -1,6 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { X } from "lucide-react";
 
 import { ApiSettings } from "@/components/ApiSettings";
@@ -11,7 +10,6 @@ type SettingsDialogProps = {
   apiConfig: ImageApiConfig;
   message: { text: string; tone: "success" | "error" | "info" } | null;
   disabled?: boolean;
-  children?: ReactNode;
   onApiConfigChange: (value: ImageApiConfig) => void;
   onSave: () => void;
   onReset: () => void;
@@ -23,7 +21,6 @@ export function SettingsDialog({
   apiConfig,
   message,
   disabled,
-  children,
   onApiConfigChange,
   onSave,
   onReset,
@@ -61,17 +58,13 @@ export function SettingsDialog({
           </button>
 
           <div className="max-h-[calc(100vh-1rem)] overflow-y-auto p-4 sm:max-h-[calc(100vh-2rem)]">
-            <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-              {children}
-
-              <ApiSettings
-                value={apiConfig}
-                onChange={onApiConfigChange}
-                onSave={onSave}
-                onReset={onReset}
-                disabled={disabled}
-              />
-            </div>
+            <ApiSettings
+              value={apiConfig}
+              onChange={onApiConfigChange}
+              onSave={onSave}
+              onReset={onReset}
+              disabled={disabled}
+            />
 
             {message ? (
               <p

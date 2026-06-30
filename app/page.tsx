@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -7,8 +7,13 @@ import {
   Download,
   ImagePlus,
   Loader2,
+  PencilLine,
+  Pin,
+  PinOff,
+  Plus,
   RotateCcw,
   SendHorizontal,
+  Trash2,
   User,
   WandSparkles,
   X,
@@ -20,7 +25,7 @@ import { Header } from "@/components/Header";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { validateApiBaseUrl } from "@/lib/api-url";
 import { deleteImagesFromHistory, getImagesFromHistory, saveImagesToHistory } from "@/lib/image-history-db";
-import { formatImageSize, parseImageSize } from "@/lib/image-size";
+import { parseImageSize } from "@/lib/image-size";
 import { cn, copyTextToClipboard, downloadImage, getImageSrc } from "@/lib/utils";
 import type {
   GenerateImageResponse,
@@ -36,6 +41,7 @@ const HISTORY_KEY = "ai-image-studio-history";
 const CHAT_STORE_KEY = "ai-image-studio-chat-store";
 const API_CONFIG_KEY = "ai-image-studio-api-config";
 const MAX_HISTORY_ITEMS = 20;
+const MAX_SESSION_ITEMS = 20;
 const DEFAULT_API_CONFIG: ImageApiConfig = {
   apiUrl: "https://dahlo.live",
   apiKey: "",
@@ -52,6 +58,23 @@ const ASPECT_OPTIONS: Array<{ label: string; size: ImageSize; detail: string }> 
   { label: "3:4", size: "1056x1408", detail: "1056 x 1408" },
   { label: "21:9", size: "1536x656", detail: "1536 x 656" },
 ];
+
+const RESOLUTION_OPTIONS: ImageResolution[] = ["1k", "2k", "4k"];
+const QUALITY_OPTIONS: Array<{ value: ImageQuality; label: string }> = [
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+];
+
+type ChatDraft = {
+  prompt: string;
+  size: ImageSize;
+  resolution: ImageResolution;
+  quality: ImageQuality;
+  count: number;
+  referenceImageSource: string;
+  referenceImageMeta: { name?: string; type?: string } | null;
+};
 
 type ChatTurn = {
   id: string;
@@ -74,9 +97,22 @@ type PersistedChatTurn = Omit<ChatTurn, "images" | "imageCount"> & {
 
 type ChatSession = {
   id: string;
-  turns: PersistedChatTurn[];
+  title: string;
+  pinned: boolean;
+  turns: ChatTurn[];
+  draft: ChatDraft;
   createdAt: string;
   updatedAt: string;
+  titleEdited?: boolean;
+};
+
+type PersistedChatSession = Omit<ChatSession, "turns"> & {
+  turns: PersistedChatTurn[];
+};
+
+type SessionStore = {
+  activeSessionId: string;
+  sessions: PersistedChatSession[];
 };
 
 type SettingsMessage = {
@@ -84,21 +120,20 @@ type SettingsMessage = {
   tone: "success" | "error" | "info";
 };
 
-
-
+const DEFAULT_DRAFT: ChatDraft = {
+  prompt: "",
+  size: "1024x1024",
+  resolution: "1k",
+  quality: "medium",
+  count: 1,
+  referenceImageSource: "",
+  referenceImageMeta: null,
+};
 
 export default function Home() {
-  const [prompt, setPrompt] = useState("");
-  const [size, setSize] = useState<ImageSize>("1024x1024");
-  const [resolution, setResolution] = useState<ImageResolution>("1k");
-  const [quality, setQuality] = useState<ImageQuality>("medium");
-  const [count, setCount] = useState(1);
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
-  const [sessionId, setSessionId] = useState(() => createChatSessionId());
+  const [sessions, setSessions] = useState<ChatSession[]>(() => [createBlankSession()]);
+  const [activeSessionId, setActiveSessionId] = useState(() => createChatSessionId());
   const [apiConfig, setApiConfig] = useState<ImageApiConfig>(DEFAULT_API_CONFIG);
-  const [referenceImage, setReferenceImage] = useState<File | null>(null);
-  const [referenceImageSource, setReferenceImageSource] = useState("");
-  const [referencePreviewUrl, setReferencePreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [settingsMessage, setSettingsMessage] = useState<SettingsMessage | null>(null);
@@ -106,35 +141,43 @@ export default function Home() {
   const [previewImage, setPreviewImage] = useState<GeneratedImage | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [referenceAction, setReferenceAction] = useState<"attach" | "replace">("attach");
-  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
-  const [ratioMenuOpen, setRatioMenuOpen] = useState(false);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+  const [referenceDragging, setReferenceDragging] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
-  const ratioMenuRef = useRef<HTMLDivElement>(null);
 
-  const canGenerate = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading]);
-  const selectedAspectOption = useMemo(
-    () => ASPECT_OPTIONS.find((option) => option.size === size) || ASPECT_OPTIONS[0],
-    [size],
+  const activeSession = useMemo(
+    () => sessions.find((session) => session.id === activeSessionId) || sessions[0] || createBlankSession(),
+    [sessions, activeSessionId],
   );
 
-  useEffect(() => {
-    if (!referenceImage) {
-      setReferencePreviewUrl(referenceImageSource || "");
-      return;
-    }
+  const sortedSessions = useMemo(() => {
+    return [...sessions].sort((left, right) => {
+      if (left.pinned !== right.pinned) {
+        return Number(right.pinned) - Number(left.pinned);
+      }
 
-    const objectUrl = URL.createObjectURL(referenceImage);
-    setReferencePreviewUrl(objectUrl);
+      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+    });
+  }, [sessions]);
 
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [referenceImage, referenceImageSource]);
+  const canGenerate = useMemo(
+    () => activeSession.draft.prompt.trim().length > 0 && !loading,
+    [activeSession.draft.prompt, loading],
+  );
 
+  const selectedAspectOption = useMemo(
+    () => ASPECT_OPTIONS.find((option) => option.size === activeSession.draft.size) || ASPECT_OPTIONS[0],
+    [activeSession.draft.size],
+  );
+
+  const referencePreviewUrl = activeSession.draft.referenceImageSource;
   useEffect(() => {
     let cancelled = false;
 
@@ -142,32 +185,39 @@ export default function Home() {
       try {
         const rawStore = window.localStorage.getItem(CHAT_STORE_KEY);
         if (rawStore) {
-          const store = JSON.parse(rawStore) as { activeSessionId?: string; sessions?: ChatSession[] };
-          const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
-          const activeSessionId =
-            typeof store?.activeSessionId === "string" ? store.activeSessionId : sessions[0]?.id;
-          const activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0];
+          const parsed = JSON.parse(rawStore) as Partial<SessionStore> | null;
+          const loadedSessions = Array.isArray(parsed?.sessions)
+            ? parsed.sessions.map((session) => normalizeSession(session))
+            : [];
+          const activeId = typeof parsed?.activeSessionId === "string" ? parsed.activeSessionId : loadedSessions[0]?.id;
 
-          if (activeSession) {
-            const hydratedTurns = await hydratePersistedTurns(activeSession.turns.slice(0, MAX_HISTORY_ITEMS));
-            if (cancelled) {
-              return;
-            }
+          if (loadedSessions.length > 0) {
+            const hydratedSessions = await hydrateSessions(loadedSessions.slice(0, MAX_SESSION_ITEMS));
+            if (cancelled) return;
 
-            setSessionId(activeSession.id);
-            setTurns(hydratedTurns);
+            setSessions(hydratedSessions);
+            setActiveSessionId(activeId && hydratedSessions.some((session) => session.id === activeId) ? activeId : hydratedSessions[0].id);
+          } else {
+            throw new Error("Empty session store");
           }
         } else {
           const rawHistory = window.localStorage.getItem(HISTORY_KEY);
           if (rawHistory) {
             const history = JSON.parse(rawHistory) as PersistedChatTurn[];
-            if (Array.isArray(history)) {
+            if (Array.isArray(history) && history.length > 0) {
               const hydratedTurns = await hydratePersistedTurns(history.slice(0, MAX_HISTORY_ITEMS));
-              if (cancelled) {
-                return;
-              }
+              if (cancelled) return;
 
-              setTurns(hydratedTurns);
+              const createdAt = hydratedTurns[0]?.createdAt || new Date().toISOString();
+              const title = deriveTitleFromPrompt(hydratedTurns[0]?.prompt || "");
+              const session = createBlankSession();
+              session.createdAt = createdAt;
+              session.updatedAt = hydratedTurns[hydratedTurns.length - 1]?.createdAt || createdAt;
+              session.title = title || session.title;
+              session.turns = hydratedTurns;
+
+              setSessions([session]);
+              setActiveSessionId(session.id);
             }
           }
         }
@@ -204,9 +254,9 @@ export default function Home() {
 
   useEffect(() => {
     if (historyLoaded) {
-      persistChatStore(sessionId, turns);
+      persistChatStore(activeSessionId, sessions);
     }
-  }, [historyLoaded, sessionId, turns]);
+  }, [historyLoaded, activeSessionId, sessions]);
 
   useEffect(() => {
     const container = chatRef.current;
@@ -222,41 +272,36 @@ export default function Home() {
     onScroll();
     container.addEventListener("scroll", onScroll, { passive: true });
     return () => container.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [activeSessionId, sessions]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns, loading]);
+  }, [activeSession.turns, loading, activeSessionId]);
 
-  // ESC 关闭设置弹窗
   useEffect(() => {
-    if (!settingsOpen && !uploadMenuOpen && !ratioMenuOpen) return;
+    if (!settingsOpen && !uploadMenuOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSettingsOpen(false);
         setUploadMenuOpen(false);
-        setRatioMenuOpen(false);
+        setEditingSessionId(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen, uploadMenuOpen, ratioMenuOpen]);
+  }, [settingsOpen, uploadMenuOpen]);
 
-  // 点击菜单外部时收起菜单
   useEffect(() => {
-    if (!uploadMenuOpen && !ratioMenuOpen) return;
+    if (!uploadMenuOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
-      if (uploadMenuOpen && uploadMenuRef.current && !uploadMenuRef.current.contains(target)) {
+      if (uploadMenuRef.current && !uploadMenuRef.current.contains(target)) {
         setUploadMenuOpen(false);
-      }
-      if (ratioMenuOpen && ratioMenuRef.current && !ratioMenuRef.current.contains(target)) {
-        setRatioMenuOpen(false);
       }
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [uploadMenuOpen, ratioMenuOpen]);
+  }, [uploadMenuOpen]);
 
   const handleDownload = useCallback((image: GeneratedImage) => {
     const src = getImageSrc(image);
@@ -265,26 +310,34 @@ export default function Home() {
     downloadImage(src, `ai-image-${image.id}.${ext}`);
   }, []);
 
+  const updateActiveSession = useCallback(
+    (updater: (session: ChatSession) => ChatSession) => {
+      setSessions((current) => current.map((session) => (session.id === activeSessionId ? updater(session) : session)));
+    },
+    [activeSessionId],
+  );
+
   async function handleGenerate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!prompt.trim()) {
+    const promptText = activeSession.draft.prompt.trim();
+    if (!promptText) {
       setError("请先输入提示词。");
       return;
     }
 
+    const currentSession = activeSession;
     const turnId = createChatTurnId();
     const createdAt = new Date().toISOString();
-    const promptText = prompt.trim();
-    const effectiveMode: ImageMode = referenceImage || referenceImageSource ? "edit" : "generate";
-    const dataReference = referenceImageSource.startsWith("data:");
-    const referenceImageUrl = !referenceImage && referenceImageSource && !dataReference ? referenceImageSource : "";
-    const editImage =
-      effectiveMode === "edit" && dataReference
-        ? referenceImage || (await buildReferenceFileFromSource(referenceImageSource))
-        : referenceImage;
+    const effectiveMode: ImageMode = currentSession.draft.referenceImageSource ? "edit" : "generate";
+    const referenceImageUrl = currentSession.draft.referenceImageSource.startsWith("data:")
+      ? ""
+      : currentSession.draft.referenceImageSource;
+    const referenceImageFile = currentSession.draft.referenceImageSource.startsWith("data:")
+      ? await buildReferenceFileFromSource(currentSession.draft.referenceImageSource)
+      : null;
 
-    if (effectiveMode === "edit" && !editImage && !referenceImageUrl) {
+    if (effectiveMode === "edit" && !referenceImageFile && !referenceImageUrl) {
       setError("参考图暂时读取失败，请重新选择图片后再试。");
       return;
     }
@@ -292,21 +345,30 @@ export default function Home() {
     setLoading(true);
     setError("");
     setUploadMenuOpen(false);
-    setRatioMenuOpen(false);
-    setTurns((current) => [
-      ...current,
-      {
-        id: turnId,
+
+    updateActiveSession((session) => ({
+      ...session,
+      updatedAt: createdAt,
+      title: session.titleEdited ? session.title : session.title || deriveTitleFromPrompt(promptText),
+      turns: [
+        ...session.turns,
+        {
+          id: turnId,
+          prompt: promptText,
+          images: [],
+          mode: effectiveMode,
+          size: session.draft.size,
+          resolution: session.draft.resolution,
+          quality: session.draft.quality,
+          createdAt,
+          status: "loading",
+        },
+      ],
+      draft: {
+        ...session.draft,
         prompt: promptText,
-        images: [],
-        mode: effectiveMode,
-        size,
-        resolution,
-        quality,
-        createdAt,
-        status: "loading",
       },
-    ]);
+    }));
 
     try {
       const apiConfigPayload = normalizeApiConfig(apiConfig);
@@ -318,12 +380,12 @@ export default function Home() {
               cache: "no-store",
               body: buildImageEditFormData({
                 prompt: promptText,
-                size,
-                resolution,
-                quality,
-                count,
+                size: currentSession.draft.size,
+                resolution: currentSession.draft.resolution,
+                quality: currentSession.draft.quality,
+                count: currentSession.draft.count,
                 apiConfig: apiConfigPayload,
-                image: editImage,
+                image: referenceImageFile,
                 referenceImageUrl,
               }),
             })
@@ -336,16 +398,15 @@ export default function Home() {
               cache: "no-store",
               body: JSON.stringify({
                 prompt: promptText,
-                size,
-                resolution,
-                quality,
-                n: count,
+                size: currentSession.draft.size,
+                resolution: currentSession.draft.resolution,
+                quality: currentSession.draft.quality,
+                n: currentSession.draft.count,
                 apiConfig: apiConfigPayload,
               }),
             });
 
       const data = await parseGenerateImageResponse(response);
-
       if (!data.success) {
         throw new Error(data.message);
       }
@@ -356,24 +417,31 @@ export default function Home() {
         console.warn("[image-history] failed to save generated images", storageError);
       }
 
-      setTurns((current) =>
-        current.map((turn) =>
-          turn.id === turnId
-            ? { ...turn, images: data.images, imageIds: data.images.map((image) => image.id), status: "done" }
-            : turn,
-        ),
-      );
+      updateActiveSession((session) => {
+        const nextTitle = session.titleEdited ? session.title : deriveTitleFromPrompt(promptText) || session.title;
+        return {
+          ...session,
+          title: nextTitle,
+          updatedAt: new Date().toISOString(),
+          turns: session.turns.map((turn) =>
+            turn.id === turnId
+              ? { ...turn, images: data.images, imageIds: data.images.map((image) => image.id), status: "done" }
+              : turn,
+          ),
+        };
+      });
 
-      if (referenceAction === "replace" && effectiveMode === "edit") {
-        setReferenceImage(null);
-        setReferenceImageSource("");
-      }
-      setPrompt("");
+      setActiveSessionDraft((draft) => ({
+        ...draft,
+        prompt: "",
+      }));
     } catch (requestError) {
       const message = getFriendlyGenerateErrorMessage(requestError);
-      setTurns((current) =>
-        current.map((turn) => (turn.id === turnId ? { ...turn, status: "error", error: message } : turn)),
-      );
+      updateActiveSession((session) => ({
+        ...session,
+        updatedAt: new Date().toISOString(),
+        turns: session.turns.map((turn) => (turn.id === turnId ? { ...turn, status: "error", error: message } : turn)),
+      }));
       setError(message);
     } finally {
       setLoading(false);
@@ -381,16 +449,18 @@ export default function Home() {
   }
 
   function handleDeleteTurn(id: string) {
-    setTurns((current) => {
-      const target = current.find((turn) => turn.id === id);
-      if (target) {
-        void deleteImagesFromHistory(getImageIdsFromTurn(target)).catch((storageError) => {
-          console.warn("[image-history] failed to delete turn images", storageError);
-        });
-      }
+    const target = activeSession.turns.find((turn) => turn.id === id);
+    if (target) {
+      void deleteImagesFromHistory(getImageIdsFromTurn(target)).catch((storageError) => {
+        console.warn("[image-history] failed to delete turn images", storageError);
+      });
+    }
 
-      return current.filter((turn) => turn.id !== id);
-    });
+    updateActiveSession((session) => ({
+      ...session,
+      updatedAt: new Date().toISOString(),
+      turns: session.turns.filter((turn) => turn.id !== id),
+    }));
   }
 
   async function handleCopyTurnPrompt(turn: ChatTurn) {
@@ -404,35 +474,89 @@ export default function Home() {
   }
 
   function handleNewChat() {
-    setSessionId(createChatSessionId());
-    setTurns([]);
-    setPrompt("");
-    setReferenceImage(null);
-    setReferenceImageSource("");
-    setReferencePreviewUrl("");
-    setReferenceAction("attach");
-    setUploadMenuOpen(false);
-    setRatioMenuOpen(false);
+    if (loading) return;
+    const nextSession = createBlankSession();
+    setSessions((current) => [nextSession, ...current.filter((session) => session.id !== nextSession.id)].slice(0, MAX_SESSION_ITEMS));
+    setActiveSessionId(nextSession.id);
+    setEditingSessionId(null);
     setError("");
     scrollToComposer();
   }
 
   function handleClearChat() {
-    setTurns((current) => {
-      void deleteImagesFromHistory(getImageIdsFromTurns(current)).catch((storageError) => {
-        console.warn("[image-history] failed to clear chat images", storageError);
-      });
-
-      return [];
+    if (loading) return;
+    void deleteImagesFromHistory(getImageIdsFromTurns(activeSession.turns)).catch((storageError) => {
+      console.warn("[image-history] failed to clear chat images", storageError);
     });
-    setPrompt("");
-    setReferenceImage(null);
-    setReferenceImageSource("");
-    setReferencePreviewUrl("");
-    setReferenceAction("attach");
-    setUploadMenuOpen(false);
-    setRatioMenuOpen(false);
+
+    updateActiveSession((session) => ({
+      ...session,
+      title: "新聊天",
+      titleEdited: false,
+      pinned: false,
+      turns: [],
+      draft: { ...DEFAULT_DRAFT },
+      updatedAt: new Date().toISOString(),
+    }));
+    setEditingSessionId(null);
     setError("");
+  }
+
+  function handleSwitchSession(sessionId: string) {
+    if (loading) return;
+    setActiveSessionId(sessionId);
+    setEditingSessionId(null);
+    setError("");
+  }
+
+  function handleTogglePin(sessionId: string) {
+    if (loading) return;
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === sessionId ? { ...session, pinned: !session.pinned, updatedAt: new Date().toISOString() } : session,
+      ),
+    );
+  }
+
+  function handleDeleteSession(sessionId: string) {
+    if (loading) return;
+    const target = sessions.find((session) => session.id === sessionId);
+    if (target) {
+      void deleteImagesFromHistory(getImageIdsFromTurnsFromSession(target)).catch((storageError) => {
+        console.warn("[image-history] failed to delete session images", storageError);
+      });
+    }
+
+    setSessions((current) => {
+      const remaining = current.filter((session) => session.id !== sessionId);
+      if (remaining.length === 0) {
+        const next = createBlankSession();
+        setActiveSessionId(next.id);
+        return [next];
+      }
+
+      if (sessionId === activeSessionId) {
+        setActiveSessionId(remaining[0].id);
+      }
+
+      return remaining;
+    });
+  }
+
+  function beginRenameSession(session: ChatSession) {
+    if (loading) return;
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title);
+  }
+
+  function commitRenameSession(sessionId: string, nextTitle: string) {
+    const title = nextTitle.trim() || "新聊天";
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === sessionId ? { ...session, title, titleEdited: true, updatedAt: new Date().toISOString() } : session,
+      ),
+    );
+    setEditingSessionId(null);
   }
 
   function scrollToComposer() {
@@ -440,25 +564,40 @@ export default function Home() {
   }
 
   function handleReuse(image: GeneratedImage) {
-    setPrompt(image.prompt);
-    setSize(image.size || "1024x1024");
-    setResolution(image.resolution || "1k");
-    setQuality(image.quality);
+    updateActiveSession((session) => ({
+      ...session,
+      draft: {
+        ...session.draft,
+        prompt: image.prompt,
+        size: image.size || "1024x1024",
+        resolution: image.resolution || "1k",
+        quality: image.quality,
+      },
+      updatedAt: new Date().toISOString(),
+    }));
     scrollToComposer();
   }
 
-  async function handleContinueEdit(image: GeneratedImage) {
+  function handleContinueEdit(image: GeneratedImage) {
     const src = getImageSrc(image);
     if (!src) {
       setError("这张图片暂时没有可用的参考图地址，请换一张图片再试。");
       return;
     }
 
-    const file = image.base64 || src.startsWith("data:") ? await buildReferenceFileFromImage(image, src) : null;
-    setReferenceAction("attach");
-    setReferenceImageSource(src);
-    setReferenceImage(file);
-    setReferencePreviewUrl(src);
+    updateActiveSession((session) => ({
+      ...session,
+      draft: {
+        ...session.draft,
+        prompt: image.prompt,
+        size: image.size || "1024x1024",
+        resolution: image.resolution || "1k",
+        quality: image.quality,
+        referenceImageSource: src,
+        referenceImageMeta: { name: `reference-${image.id}.png`, type: "image/png" },
+      },
+      updatedAt: new Date().toISOString(),
+    }));
     setError("");
     scrollToComposer();
   }
@@ -489,23 +628,54 @@ export default function Home() {
     window.setTimeout(() => setSettingsMessage(null), 1600);
   }
 
-  function handleReferenceImageChange(file: File | null) {
-    setReferenceImage(file);
-    if (file) {
-      setReferenceImageSource("");
+  function setActiveSessionDraft(updater: (draft: ChatDraft) => ChatDraft) {
+    updateActiveSession((session) => ({
+      ...session,
+      draft: updater(session.draft),
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+
+  function handleReferenceImageFiles(file: File | null) {
+    if (!file) {
+      setActiveSessionDraft((draft) => ({
+        ...draft,
+        referenceImageSource: "",
+        referenceImageMeta: null,
+      }));
       return;
     }
 
-    setReferenceImageSource("");
+    if (!file.type.startsWith("image/")) {
+      setError("请选择图片文件。");
+      return;
+    }
+
+    void (async () => {
+      const dataUrl = await readFileAsDataUrl(file);
+      setActiveSessionDraft((draft) => ({
+        ...draft,
+        referenceImageSource: dataUrl,
+        referenceImageMeta: { name: file.name, type: file.type },
+      }));
+      setError("");
+    })().catch(() => {
+      setError("参考图读取失败，请重试。");
+    });
+  }
+
+  function handleDropReference(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setReferenceDragging(false);
+    if (loading) return;
+    const file = event.dataTransfer.files?.[0] || null;
+    handleReferenceImageFiles(file);
   }
 
   return (
     <main className="flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto lg:h-screen lg:overflow-hidden">
-      <Header
-        onOpenSettings={() => setSettingsOpen(true)}
-        onNewChat={handleNewChat}
-        onClearChat={handleClearChat}
-      />
+      <Header onOpenSettings={() => setSettingsOpen(true)} onNewChat={handleNewChat} onClearChat={handleClearChat} />
+
       <SettingsDialog
         open={settingsOpen}
         apiConfig={apiConfig}
@@ -515,267 +685,479 @@ export default function Home() {
         onSave={handleSaveApiConfig}
         onReset={handleResetApiConfig}
         onClose={() => setSettingsOpen(false)}
-      >
-        <ParameterSettings
-          size={size}
-          resolution={resolution}
-          count={count}
-          loading={loading}
-          onSizeChange={setSize}
-          onResolutionChange={setResolution}
-          onCountChange={setCount}
-        />
-      </SettingsDialog>
+      />
 
-      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 pb-4 pt-20 sm:px-6 sm:pt-20">
-        <section
-          id="history"
-          ref={chatRef}
-          className="min-h-0 flex-1 space-y-5 overflow-y-auto rounded-lg border border-white/10 bg-panel/55 p-4 shadow-soft"
-        >
-          {turns.length === 0 ? <EmptyChatState /> : null}
+      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-4 px-4 pb-4 pt-20 sm:px-6 lg:flex-row">
+        <aside className="min-h-0 w-full shrink-0 overflow-hidden rounded-lg border border-white/10 bg-panel/55 shadow-soft lg:w-80">
+          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-white">聊天分组</h2>
+              <p className="mt-1 text-xs text-stone-400">{sortedSessions.length} 个会话</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleNewChat}
+              disabled={loading}
+              className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60"
+              title="新建聊天"
+            >
+              <Plus className="size-4" aria-hidden />
+              <span className="sr-only">新建聊天</span>
+            </button>
+          </div>
 
-          {turns.map((turn) => (
-            <article key={turn.id} className="space-y-3">
-              <div className="flex flex-row-reverse items-start gap-3">
-                <Avatar icon={<User className="size-4" aria-hidden />} />
-                <div className="max-w-[min(42rem,82vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
-                  <p className="select-text whitespace-pre-wrap text-sm leading-6 selection:bg-ink selection:text-white">
-                    {turn.prompt}
-                  </p>
-                  <div className="mt-2 flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleCopyTurnPrompt(turn)}
-                      className="text-xs text-ink/70 transition hover:text-ink"
-                    >
-                      {copiedTurnId === turn.id ? "已复制" : "复制文字"}
-                    </button>
+          <div className="max-h-[32rem] overflow-y-auto p-2 lg:h-[calc(100dvh-8rem)] lg:max-h-none">
+            <div className="space-y-2">
+              {sortedSessions.map((session) => {
+                const active = session.id === activeSessionId;
+                const editing = editingSessionId === session.id;
+                return (
+                  <div
+                    key={session.id}
+                    className={cn(
+                      "rounded-md border p-2 transition",
+                      active ? "border-mint/50 bg-mint/[0.08]" : "border-white/10 bg-white/[0.03]",
+                    )}
+                  >
+                    <div className="flex items-start gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSwitchSession(session.id)}
+                        disabled={loading}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        {editing ? (
+                          <input
+                            value={editingTitle}
+                            onChange={(event) => setEditingTitle(event.target.value)}
+                            onBlur={() => commitRenameSession(session.id, editingTitle)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                commitRenameSession(session.id, editingTitle);
+                              }
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                setEditingSessionId(null);
+                              }
+                            }}
+                            autoFocus
+                            className="h-9 w-full rounded-md border border-white/10 bg-ink px-2 text-sm text-white"
+                          />
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <p className="truncate text-sm font-medium text-white">{session.title}</p>
+                              {session.pinned ? <Pin className="size-3.5 text-gold" aria-hidden /> : null}
+                            </div>
+                            <p className="mt-1 text-xs text-stone-400">
+                              {session.turns.length} 轮 · {formatSessionTime(session.updatedAt)}
+                            </p>
+                          </>
+                        )}
+                      </button>
+
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePin(session.id)}
+                          disabled={loading}
+                          className="grid size-8 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-300 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-50"
+                          title={session.pinned ? "取消置顶" : "置顶"}
+                        >
+                          {session.pinned ? <PinOff className="size-3.5" aria-hidden /> : <Pin className="size-3.5" aria-hidden />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => beginRenameSession(session)}
+                          disabled={loading}
+                          className="grid size-8 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-300 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-50"
+                          title="重命名"
+                        >
+                          <PencilLine className="size-3.5" aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSession(session.id)}
+                          disabled={loading}
+                          className="grid size-8 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-300 transition hover:border-coral/60 hover:text-coral disabled:cursor-not-allowed disabled:opacity-50"
+                          title="删除聊天"
+                        >
+                          <Trash2 className="size-3.5" aria-hidden />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+          <section
+            id="history"
+            ref={chatRef}
+            className="min-h-0 flex-1 space-y-5 overflow-y-auto rounded-lg border border-white/10 bg-panel/55 p-4 shadow-soft"
+          >
+            {activeSession.turns.length === 0 ? <EmptyChatState /> : null}
+
+            {activeSession.turns.map((turn) => (
+              <article key={turn.id} className="space-y-3">
+                <div className="flex flex-row-reverse items-start gap-3">
+                  <Avatar icon={<User className="size-4" aria-hidden />} />
+                  <div className="max-w-[min(42rem,82vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
+                    <p className="select-text whitespace-pre-wrap text-sm leading-6 selection:bg-ink selection:text-white">{turn.prompt}</p>
+                    <div className="mt-2 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleCopyTurnPrompt(turn)}
+                        className="text-xs text-ink/70 transition hover:text-ink"
+                      >
+                        {copiedTurnId === turn.id ? "已复制" : "复制文字"}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex items-start gap-3">
-                <Avatar icon={<Bot className="size-4" aria-hidden />} />
+                <div className="flex items-start gap-3">
+                  <Avatar icon={<Bot className="size-4" aria-hidden />} />
+                  <div
+                    className={cn(
+                      "min-w-0 max-w-[min(56rem,86vw)] rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
+                      turn.status === "loading" ? "w-fit" : "flex-1",
+                    )}
+                  >
+                    {turn.status === "loading" ? <LoadingBubble count={activeSession.draft.count} /> : null}
+                    {turn.status === "error" ? <p className="text-sm leading-6 text-rose-200">{turn.error}</p> : null}
+                    {turn.status === "done" ? (
+                      <div className="space-y-3">
+                        <p className="text-xs text-stone-400">
+                          已生成 {turn.images.length > 0 ? turn.images.length : turn.imageCount || 0} 张图片
+                        </p>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          {turn.images.map((image) => (
+                            <GeneratedImageCard
+                              key={image.id}
+                              image={image}
+                              onPreview={setPreviewImage}
+                              onContinueEdit={handleContinueEdit}
+                              onReuse={handleReuse}
+                              onDownload={handleDownload}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteTurn(turn.id)}
+                    className="text-xs text-stone-500 transition hover:text-stone-300"
+                  >
+                    删除这一轮
+                  </button>
+                </div>
+              </article>
+            ))}
+
+            <div ref={bottomRef} />
+          </section>
+
+          <section id="composer" className="rounded-lg border border-white/10 bg-panel/80 p-3 shadow-soft">
+            <form onSubmit={handleGenerate} className="space-y-3">
+              {error ? (
+                <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">{error}</div>
+              ) : null}
+
+              {referencePreviewUrl ? (
                 <div
                   className={cn(
-                    "min-w-0 max-w-[min(56rem,86vw)] rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
-                    turn.status === "loading" ? "w-fit" : "flex-1",
+                    "rounded-md border p-2 transition",
+                    referenceDragging ? "border-mint bg-mint/[0.08]" : "border-white/10 bg-white/[0.03]",
                   )}
                 >
-                  {turn.status === "loading" ? <LoadingBubble count={count} /> : null}
-                  {turn.status === "error" ? <p className="text-sm leading-6 text-rose-200">{turn.error}</p> : null}
-                  {turn.status === "done" ? (
-                    <div className="space-y-3">
-                      <p className="text-xs text-stone-400">
-                        已生成 {turn.images.length > 0 ? turn.images.length : (turn as unknown as { imageCount?: number }).imageCount ?? 0} 张图片
+                  <label
+                    className="flex cursor-pointer items-center gap-3"
+                    onDragEnter={() => setReferenceDragging(true)}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setReferenceDragging(true);
+                    }}
+                    onDragLeave={() => setReferenceDragging(false)}
+                    onDrop={handleDropReference}
+                  >
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => {
+                        handleReferenceImageFiles(event.target.files?.[0] || null);
+                        event.currentTarget.value = "";
+                      }}
+                      disabled={loading}
+                    />
+                    <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-white/10 bg-ink">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={referencePreviewUrl} alt="参考图预览" className="h-full w-full object-cover" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-white">参考图已就绪</p>
+                      <p className="truncate text-xs text-stone-400">
+                        {activeSession.draft.referenceImageMeta?.name || "拖拽图片到这里，或点击更换"}
                       </p>
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {turn.images.map((image) => (
-                          <GeneratedImageCard
-                            key={image.id}
-                            image={image}
-                            onPreview={setPreviewImage}
-                            onContinueEdit={handleContinueEdit}
-                            onReuse={handleReuse}
-                            onDownload={handleDownload}
-                          />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveSessionDraft((draft) => ({
+                          ...draft,
+                          referenceImageSource: "",
+                          referenceImageMeta: null,
+                        }))
+                      }
+                      className="grid size-9 place-items-center rounded-md border border-white/10 text-stone-300 transition hover:border-coral/60 hover:text-coral"
+                      title="移除参考图"
+                    >
+                      <X className="size-4" aria-hidden />
+                      <span className="sr-only">移除参考图</span>
+                    </button>
+                  </label>
+                </div>
+              ) : (
+                <label
+                  className={cn(
+                    "flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed px-4 py-4 text-center transition",
+                    referenceDragging ? "border-mint bg-mint/[0.08]" : "border-white/15 bg-white/[0.03] hover:border-mint/50",
+                  )}
+                  onDragEnter={() => setReferenceDragging(true)}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setReferenceDragging(true);
+                  }}
+                  onDragLeave={() => setReferenceDragging(false)}
+                  onDrop={handleDropReference}
+                >
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => {
+                      handleReferenceImageFiles(event.target.files?.[0] || null);
+                      event.currentTarget.value = "";
+                    }}
+                    disabled={loading}
+                  />
+                  <div className="mx-auto grid size-12 place-items-center rounded-md bg-white/[0.06] text-mint">
+                    <ImagePlus className="size-5" aria-hidden />
+                  </div>
+                  <p className="mt-3 text-sm font-medium text-white">拖拽图片到这里，或点击上传参考图</p>
+                  <p className="mt-1 text-xs text-stone-500">支持 PNG、JPG、WEBP</p>
+                </label>
+              )}
+
+              <div className="space-y-3">
+                <textarea
+                  value={activeSession.draft.prompt}
+                  onChange={(event) =>
+                    setActiveSessionDraft((draft) => ({
+                      ...draft,
+                      prompt: event.target.value,
+                    }))
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  disabled={loading}
+                  maxLength={2000}
+                  rows={3}
+                  placeholder="输入你想生成或修改的画面..."
+                  className="min-h-[72px] w-full resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
+                />
+
+                <div className="grid gap-3 lg:grid-cols-[1.8fr_1fr]">
+                  <div className="space-y-2 rounded-md border border-white/10 bg-white/[0.03] p-3">
+                    <div className="flex items-center justify-between text-xs text-stone-400">
+                      <span>画幅</span>
+                      <span className="text-white">{selectedAspectOption.label} · {selectedAspectOption.detail}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {ASPECT_OPTIONS.map((item) => (
+                        <AspectChip
+                          key={item.size}
+                          label={item.label}
+                          detail={item.detail}
+                          active={activeSession.draft.size === item.size}
+                          onClick={() =>
+                            setActiveSessionDraft((draft) => ({
+                              ...draft,
+                              size: item.size,
+                            }))
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs text-stone-400">
+                        <span>分辨率</span>
+                        <span className="text-white">{activeSession.draft.resolution.toUpperCase()}</span>
+                      </div>
+                      <select
+                        value={activeSession.draft.resolution}
+                        onChange={(event) =>
+                          setActiveSessionDraft((draft) => ({
+                            ...draft,
+                            resolution: event.target.value as ImageResolution,
+                          }))
+                        }
+                        disabled={loading}
+                        className="h-10 w-full rounded-md border border-white/10 bg-ink px-3 text-sm text-white transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {RESOLUTION_OPTIONS.map((item) => (
+                          <option key={item} value={item}>
+                            {item.toUpperCase()}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs text-stone-400">
+                        <span>质量</span>
+                        <span className="text-white">
+                          {QUALITY_OPTIONS.find((item) => item.value === activeSession.draft.quality)?.label || "中"}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {QUALITY_OPTIONS.map((item) => (
+                          <button
+                            key={item.value}
+                            type="button"
+                            onClick={() =>
+                              setActiveSessionDraft((draft) => ({
+                                ...draft,
+                                quality: item.value,
+                              }))
+                            }
+                            disabled={loading}
+                            className={cn(
+                              "h-10 rounded-md border px-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-60",
+                              activeSession.draft.quality === item.value
+                                ? "border-mint bg-mint text-ink"
+                                : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50",
+                            )}
+                          >
+                            {item.label}
+                          </button>
                         ))}
                       </div>
                     </div>
-                  ) : null}
-                </div>
-              </div>
 
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => handleDeleteTurn(turn.id)}
-                  className="text-xs text-stone-500 transition hover:text-stone-300"
-                >
-                  删除这一轮
-                </button>
-              </div>
-            </article>
-          ))}
-
-          <div ref={bottomRef} />
-        </section>
-
-        <section id="composer" className="mt-4 rounded-lg border border-white/10 bg-panel/80 p-3 shadow-soft">
-          <form onSubmit={handleGenerate} className="space-y-3">
-            {error ? (
-              <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">
-                {error}
-              </div>
-            ) : null}
-
-            {referencePreviewUrl ? (
-              <div className="flex items-center gap-3 rounded-md border border-white/10 bg-white/[0.03] p-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={referencePreviewUrl} alt="参考图预览" className="size-12 rounded-md object-cover" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium text-white">正在基于参考图继续修改</p>
-                  <p className="truncate text-xs text-stone-400">参数可在右上角设置中调整</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setReferenceImage(null);
-                    setReferenceImageSource("");
-                  }}
-                  className="text-xs text-stone-400 transition hover:text-coral"
-                >
-                  移除
-                </button>
-              </div>
-            ) : null}
-
-            <div className="flex items-end gap-3">
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                disabled={loading}
-                maxLength={2000}
-                rows={2}
-                placeholder="输入你想生成或修改的画面..."
-                className="min-h-[56px] flex-1 resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
-              />
-              <div className="relative shrink-0" ref={uploadMenuRef}>
-                <button
-                  type="button"
-                  onClick={() => setUploadMenuOpen((current) => !current)}
-                  disabled={loading}
-                  className={cn(
-                    "inline-flex h-12 w-12 items-center justify-center rounded-md border transition sm:h-14 sm:w-14",
-                    referencePreviewUrl
-                      ? "border-mint/50 bg-mint/10 text-mint hover:bg-mint hover:text-ink"
-                      : "border-white/10 bg-white/[0.04] text-stone-200 hover:border-mint/50 hover:text-mint",
-                    loading ? "cursor-not-allowed opacity-60" : "",
-                  )}
-                  title="添加图片"
-                >
-                  <ImagePlus className="size-5" aria-hidden />
-                  <span className="sr-only">添加图片</span>
-                </button>
-
-                {uploadMenuOpen ? (
-                  <div className="absolute bottom-full right-0 mb-2 w-36 overflow-hidden rounded-md border border-white/10 bg-ink/95 shadow-soft">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUploadMenuOpen(false);
-                        imageInputRef.current?.click();
-                      }}
-                      className="block w-full px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.05]"
-                    >
-                      从相册选择
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUploadMenuOpen(false);
-                        cameraInputRef.current?.click();
-                      }}
-                      className="block w-full px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.05]"
-                    >
-                      直接拍照
-                    </button>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs text-stone-400">
+                        <span>数量</span>
+                        <span className="text-white">{activeSession.draft.count}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={1}
+                        max={4}
+                        value={activeSession.draft.count}
+                        onChange={(event) =>
+                          setActiveSessionDraft((draft) => ({
+                            ...draft,
+                            count: Number(event.target.value),
+                          }))
+                        }
+                        disabled={loading}
+                        className="w-full accent-mint"
+                      />
+                    </div>
                   </div>
-                ) : null}
+                </div>
               </div>
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(event) => {
-                  handleReferenceImageChange(event.target.files?.[0] || null);
-                  event.currentTarget.value = "";
-                }}
-                disabled={loading}
-              />
-              <input
-                ref={cameraInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(event) => {
-                  handleReferenceImageChange(event.target.files?.[0] || null);
-                  event.currentTarget.value = "";
-                }}
-                disabled={loading}
-              />
-              <button
-                type="submit"
-                disabled={!canGenerate}
-                className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300 sm:h-14 sm:w-14"
-                title="发送"
-              >
-                {loading ? (
-                  <Loader2 className="size-5 animate-spin" aria-hidden />
-                ) : (
-                  <SendHorizontal className="size-5" aria-hidden />
-                )}
-                <span className="sr-only">发送</span>
-              </button>
-            </div>
 
-            <div className="flex flex-col gap-2 text-xs text-stone-400 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative w-full sm:w-auto" ref={ratioMenuRef}>
-                <button
-                  type="button"
-                  onClick={() => setRatioMenuOpen((current) => !current)}
-                  disabled={loading}
-                  className="flex h-10 w-full min-w-0 items-center justify-between gap-3 rounded-md border border-white/10 bg-white/[0.04] px-3 text-left text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60 sm:w-48"
-                  title="选择画幅"
-                >
-                  <span className="min-w-0 truncate">
-                    画幅 {selectedAspectOption.label}
-                    <span className="ml-2 text-stone-500">{selectedAspectOption.detail}</span>
-                  </span>
-                  <ChevronDown className="size-4 shrink-0" aria-hidden />
-                </button>
+              <div className="flex items-end gap-3">
+                <div className="relative shrink-0" ref={uploadMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setUploadMenuOpen((current) => !current)}
+                    disabled={loading}
+                    className={cn(
+                      "inline-flex h-12 w-12 items-center justify-center rounded-md border transition sm:h-14 sm:w-14",
+                      referencePreviewUrl
+                        ? "border-mint/50 bg-mint/10 text-mint hover:bg-mint hover:text-ink"
+                        : "border-white/10 bg-white/[0.04] text-stone-200 hover:border-mint/50 hover:text-mint",
+                      loading ? "cursor-not-allowed opacity-60" : "",
+                    )}
+                    title="添加图片"
+                  >
+                    <ImagePlus className="size-5" aria-hidden />
+                    <span className="sr-only">添加图片</span>
+                  </button>
 
-                {ratioMenuOpen ? (
-                  <div className="absolute bottom-full left-0 z-20 mb-2 grid w-full min-w-0 grid-cols-2 gap-1 rounded-md border border-white/10 bg-ink/95 p-1 shadow-soft sm:w-72">
-                    {ASPECT_OPTIONS.map((item) => (
+                  {uploadMenuOpen ? (
+                    <div className="absolute bottom-full right-0 mb-2 w-36 overflow-hidden rounded-md border border-white/10 bg-ink/95 shadow-soft">
                       <button
-                        key={item.size}
                         type="button"
                         onClick={() => {
-                          setSize(item.size);
-                          setRatioMenuOpen(false);
+                          setUploadMenuOpen(false);
+                          imageInputRef.current?.click();
                         }}
-                        className={cn(
-                          "flex min-w-0 items-center justify-between gap-2 rounded px-2 py-2 text-left transition",
-                          size === item.size
-                            ? "bg-mint text-ink"
-                            : "text-stone-300 hover:bg-white/[0.06] hover:text-white",
-                        )}
+                        className="block w-full px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.05]"
                       >
-                        <span className="shrink-0 font-medium">{item.label}</span>
-                        <span className={cn("truncate text-[11px]", size === item.size ? "text-ink/65" : "text-stone-500")}>
-                          {item.detail}
-                        </span>
+                        从相册选择
                       </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUploadMenuOpen(false);
+                          cameraInputRef.current?.click();
+                        }}
+                        className="block w-full px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.05]"
+                      >
+                        直接拍照
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
 
-              <button type="button" onClick={() => setSettingsOpen(true)} className="w-fit transition hover:text-mint">
-                参数设置
-              </button>
-            </div>
-          </form>
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(event) => {
+                    handleReferenceImageFiles(event.target.files?.[0] || null);
+                    event.currentTarget.value = "";
+                  }}
+                  disabled={loading}
+                />
+
+                <button
+                  type="submit"
+                  disabled={!canGenerate}
+                  className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300 sm:h-14 sm:w-14"
+                  title="发送"
+                >
+                  {loading ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <SendHorizontal className="size-5" aria-hidden />}
+                  <span className="sr-only">发送</span>
+                </button>
+              </div>
+            </form>
+          </section>
         </section>
       </div>
 
@@ -790,281 +1172,8 @@ export default function Home() {
         </button>
       ) : null}
 
-      <ImagePreviewDialog
-        image={previewImage}
-        onClose={() => setPreviewImage(null)}
-        onDownload={handleDownload}
-      />
+      <ImagePreviewDialog image={previewImage} onClose={() => setPreviewImage(null)} onDownload={handleDownload} />
     </main>
-  );
-}
-
-function ParameterSettings({
-  size,
-  resolution,
-  count,
-  loading,
-  onSizeChange,
-  onResolutionChange,
-  onCountChange,
-}: {
-  size: ImageSize;
-  resolution: ImageResolution;
-  count: number;
-  loading: boolean;
-  onSizeChange: (value: ImageSize) => void;
-  onResolutionChange: (value: ImageResolution) => void;
-  onCountChange: (value: number) => void;
-}) {
-  return (
-    <section className="rounded-lg border border-white/10 bg-panel/94 p-4 shadow-soft">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-white">生成参数</h2>
-          <p className="mt-1 text-xs text-stone-400">影响下一次发送的图片结果</p>
-        </div>
-        <p className="text-xs text-stone-400">
-          当前尺寸 <span className="text-white">{formatImageSize(size)}</span>
-        </p>
-      </div>
-
-      <div className="space-y-4">
-        <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(12rem,0.75fr)]">
-          <div className="min-w-0 space-y-2">
-            <p className="text-xs font-medium text-stone-300">画幅</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-2">
-              {ASPECT_OPTIONS.map((item) => (
-                <AspectChip
-                  key={item.size}
-                  label={item.label}
-                  detail={item.detail}
-                  active={size === item.size}
-                  onClick={() => onSizeChange(item.size)}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="min-w-0 space-y-2">
-            <p className="text-xs font-medium text-stone-300">分辨率</p>
-            <div className="grid grid-cols-3 gap-2 xl:grid-cols-1">
-              {(["1k", "2k", "4k"] as const).map((item) => (
-                <ModeChip
-                  key={item}
-                  label={item.toUpperCase()}
-                  active={resolution === item}
-                  onClick={() => onResolutionChange(item)}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs text-stone-400">
-            <span>数量</span>
-            <span className="text-white">{count}</span>
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={4}
-            value={count}
-            onChange={(event) => onCountChange(Number(event.target.value))}
-            disabled={loading}
-            className="w-full accent-mint"
-          />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function AspectChip({
-  label,
-  detail,
-  active,
-  onClick,
-}: {
-  label: string;
-  detail: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex min-h-12 min-w-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition",
-        active
-          ? "border-mint bg-mint text-ink"
-          : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50 hover:text-white",
-      )}
-    >
-      <span className="shrink-0 text-sm font-semibold">{label}</span>
-      <span className={cn("truncate text-[11px]", active ? "text-ink/65" : "text-stone-500")}>{detail}</span>
-    </button>
-  );
-}
-
-function EmptyChatState() {
-  return (
-    <div className="grid min-h-[320px] place-items-center rounded-lg border border-dashed border-white/15 bg-white/[0.03] p-8 text-center">
-      <div className="max-w-md">
-        <div className="mx-auto grid size-14 place-items-center rounded-md bg-white/[0.06] text-mint">
-          <Bot className="size-6" aria-hidden />
-        </div>
-        <h2 className="mt-4 text-lg font-semibold text-white">还没有对话</h2>
-        <p className="mt-2 text-sm leading-6 text-stone-400">输入一句描述，结果会像聊天回复一样出现在左侧。</p>
-      </div>
-    </div>
-  );
-}
-
-function Avatar({ icon }: { icon: ReactNode }) {
-  return (
-    <div className="grid size-9 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.05] text-stone-200">
-      {icon}
-    </div>
-  );
-}
-
-function ModeChip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "h-10 min-w-0 rounded-md border px-2 text-sm transition",
-        active
-          ? "border-mint bg-mint text-ink"
-          : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
-function LoadingBubble({ count }: { count: number }) {
-  return (
-    <div className="space-y-3" aria-live="polite" aria-busy="true">
-      <div className="flex items-center gap-2 text-sm font-medium text-white">
-        <Loader2 className="size-4 animate-spin text-mint" aria-hidden />
-        <span>正在生成图片</span>
-      </div>
-
-      <div className="flex flex-wrap gap-3">
-        {Array.from({ length: count }).map((_, index) => (
-          <div
-            key={index}
-            className="relative size-[min(16rem,68vw)] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] sm:size-60"
-          >
-            <div className="absolute inset-0 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.04)_32%,rgba(94,234,212,0.18)_48%,rgba(255,255,255,0.05)_64%,transparent_100%)] animate-[image-loading-shine_1.7s_ease-in-out_infinite]" />
-            <div className="absolute inset-4 rounded-md border border-white/10 bg-ink/[0.45]" />
-            <div className="absolute bottom-4 left-4 right-4 space-y-2">
-              <div className="h-2 rounded-full bg-white/15" />
-              <div className="h-2 w-2/3 rounded-full bg-white/10" />
-            </div>
-            <div className="absolute right-4 top-4 grid size-8 place-items-center rounded-full border border-mint/25 bg-mint/10 text-mint">
-              <WandSparkles className="size-4" aria-hidden />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function GeneratedImageCard({
-  image,
-  onPreview,
-  onContinueEdit,
-  onReuse,
-  onDownload,
-}: {
-  image: GeneratedImage;
-  onPreview: (image: GeneratedImage) => void;
-  onContinueEdit: (image: GeneratedImage) => void;
-  onReuse: (image: GeneratedImage) => void;
-  onDownload: (image: GeneratedImage) => void;
-}) {
-  const src = getImageSrc(image);
-  const imageSize = parseImageSize(image.size);
-  const thumbnailAspectRatio = imageSize ? `${imageSize.width} / ${imageSize.height}` : "1 / 1";
-  const [imgLoaded, setImgLoaded] = useState(false);
-  const [imgError, setImgError] = useState(false);
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
-      <button
-        type="button"
-        onClick={() => onPreview(image)}
-        className="relative block w-full text-left transition hover:bg-white/[0.04]"
-        title="预览大图"
-        style={{ aspectRatio: thumbnailAspectRatio }}
-      >
-        {/* 加载占位骨架 */}
-        {!imgLoaded && !imgError ? (
-          <div className="absolute inset-0 animate-pulse rounded-t-lg bg-white/[0.06]" />
-        ) : null}
-        {imgError ? (
-          <div className="absolute inset-0 grid place-items-center rounded-t-lg bg-white/[0.04] text-xs text-stone-500">
-            图片加载失败
-          </div>
-        ) : null}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
-          alt={image.prompt}
-          className={cn(
-            "h-full w-full object-cover transition-opacity duration-300",
-            imgLoaded ? "opacity-100" : "absolute inset-0 opacity-0",
-          )}
-          onLoad={() => setImgLoaded(true)}
-          onError={() => { setImgLoaded(true); setImgError(true); }}
-        />
-      </button>
-      <div className="space-y-2 border-t border-white/10 p-2">
-        <p className="line-clamp-2 text-xs leading-5 text-stone-300">{image.prompt}</p>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onContinueEdit(image)}
-            className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-mint/40 bg-mint/10 px-2 py-1.5 text-xs font-medium text-mint transition hover:bg-mint hover:text-ink"
-          >
-            <WandSparkles className="size-3.5" aria-hidden />
-            继续改图
-          </button>
-          <button
-            type="button"
-            onClick={() => onReuse(image)}
-            className="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 px-2 py-1.5 text-xs text-stone-300 transition hover:border-mint/50 hover:text-white"
-            title="复用参数"
-          >
-            <RotateCcw className="size-3.5" aria-hidden />
-          </button>
-          <button
-            type="button"
-            onClick={() => onDownload(image)}
-            disabled={!src}
-            className="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 px-2 py-1.5 text-xs text-stone-300 transition hover:border-mint/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-            title="下载图片"
-          >
-            <Download className="size-3.5" aria-hidden />
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1080,12 +1189,9 @@ function ImagePreviewDialog({
   const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
-    if (!image) {
-      return;
-    }
+    if (!image) return;
 
     setZoom(1);
-
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onClose();
@@ -1189,6 +1295,158 @@ function ImagePreviewDialog({
   );
 }
 
+function AspectChip({
+  label,
+  detail,
+  active,
+  onClick,
+}: {
+  label: string;
+  detail: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex min-h-12 min-w-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition",
+        active
+          ? "border-mint bg-mint text-ink"
+          : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50 hover:text-white",
+      )}
+    >
+      <span className="shrink-0 text-sm font-semibold">{label}</span>
+      <span className={cn("truncate text-[11px]", active ? "text-ink/65" : "text-stone-500")}>{detail}</span>
+    </button>
+  );
+}
+
+function EmptyChatState() {
+  return (
+    <div className="grid min-h-[320px] place-items-center rounded-lg border border-dashed border-white/15 bg-white/[0.03] p-8 text-center">
+      <div className="max-w-md">
+        <div className="mx-auto grid size-14 place-items-center rounded-md bg-white/[0.06] text-mint">
+          <Bot className="size-6" aria-hidden />
+        </div>
+        <h2 className="mt-4 text-lg font-semibold text-white">还没有对话</h2>
+        <p className="mt-2 text-sm leading-6 text-stone-400">输入一句描述，结果会像聊天回复一样出现在左侧。</p>
+      </div>
+    </div>
+  );
+}
+
+function Avatar({ icon }: { icon: ReactNode }) {
+  return <div className="grid size-9 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.05] text-stone-200">{icon}</div>;
+}
+
+function GeneratedImageCard({
+  image,
+  onPreview,
+  onContinueEdit,
+  onReuse,
+  onDownload,
+}: {
+  image: GeneratedImage;
+  onPreview: (image: GeneratedImage) => void;
+  onContinueEdit: (image: GeneratedImage) => void;
+  onReuse: (image: GeneratedImage) => void;
+  onDownload: (image: GeneratedImage) => void;
+}) {
+  const src = getImageSrc(image);
+  const imageSize = parseImageSize(image.size);
+  const thumbnailAspectRatio = imageSize ? `${imageSize.width} / ${imageSize.height}` : "1 / 1";
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
+      <button
+        type="button"
+        onClick={() => onPreview(image)}
+        className="relative block w-full text-left transition hover:bg-white/[0.04]"
+        title="预览大图"
+        style={{ aspectRatio: thumbnailAspectRatio }}
+      >
+        {!imgLoaded && !imgError ? <div className="absolute inset-0 animate-pulse rounded-t-lg bg-white/[0.06]" /> : null}
+        {imgError ? <div className="absolute inset-0 grid place-items-center rounded-t-lg bg-white/[0.04] text-xs text-stone-500">图片加载失败</div> : null}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={image.prompt}
+          className={cn("h-full w-full object-cover transition-opacity duration-300", imgLoaded ? "opacity-100" : "absolute inset-0 opacity-0")}
+          onLoad={() => setImgLoaded(true)}
+          onError={() => {
+            setImgLoaded(true);
+            setImgError(true);
+          }}
+        />
+      </button>
+      <div className="space-y-2 border-t border-white/10 p-2">
+        <p className="line-clamp-2 text-xs leading-5 text-stone-300">{image.prompt}</p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onContinueEdit(image)}
+            className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-mint/40 bg-mint/10 px-2 py-1.5 text-xs font-medium text-mint transition hover:bg-mint hover:text-ink"
+          >
+            <WandSparkles className="size-3.5" aria-hidden />
+            继续改图
+          </button>
+          <button
+            type="button"
+            onClick={() => onReuse(image)}
+            className="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 px-2 py-1.5 text-xs text-stone-300 transition hover:border-mint/50 hover:text-white"
+            title="复用参数"
+          >
+            <RotateCcw className="size-3.5" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDownload(image)}
+            disabled={!src}
+            className="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 px-2 py-1.5 text-xs text-stone-300 transition hover:border-mint/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            title="下载图片"
+          >
+            <Download className="size-3.5" aria-hidden />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoadingBubble({ count }: { count: number }) {
+  return (
+    <div className="space-y-3" aria-live="polite" aria-busy="true">
+      <div className="flex items-center gap-2 text-sm font-medium text-white">
+        <Loader2 className="size-4 animate-spin text-mint" aria-hidden />
+        <span>正在生成图片</span>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        {Array.from({ length: count }).map((_, index) => (
+          <div
+            key={index}
+            className="relative size-[min(16rem,68vw)] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] sm:size-60"
+          >
+            <div className="absolute inset-0 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.04)_32%,rgba(94,234,212,0.18)_48%,rgba(255,255,255,0.05)_64%,transparent_100%)] animate-[image-loading-shine_1.7s_ease-in-out_infinite]" />
+            <div className="absolute inset-4 rounded-md border border-white/10 bg-ink/[0.45]" />
+            <div className="absolute bottom-4 left-4 right-4 space-y-2">
+              <div className="h-2 rounded-full bg-white/15" />
+              <div className="h-2 w-2/3 rounded-full bg-white/10" />
+            </div>
+            <div className="absolute right-4 top-4 grid size-8 place-items-center rounded-full border border-mint/25 bg-mint/10 text-mint">
+              <WandSparkles className="size-4" aria-hidden />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function buildImageEditFormData({
   prompt,
   size,
@@ -1224,42 +1482,37 @@ function buildImageEditFormData({
   return formData;
 }
 
-function persistChatStore(activeSessionId: string, turns: ChatTurn[]) {
-  // 图片本体存 IndexedDB，这里只保留恢复图片所需的 ID 和对话元数据。
-  const persistedTurns: PersistedChatTurn[] = turns.slice(0, MAX_HISTORY_ITEMS).map(({ images, ...rest }) => ({
-    ...rest,
-    imageCount: images.length || rest.imageIds?.length || rest.imageCount || 0,
-    imageIds: rest.imageIds?.length ? rest.imageIds : images.map((image) => image.id),
+function persistChatStore(activeSessionId: string, sessions: ChatSession[]) {
+  const persistedSessions: PersistedChatSession[] = sessions.slice(0, MAX_SESSION_ITEMS).map((session) => ({
+    ...session,
+    turns: session.turns.slice(0, MAX_HISTORY_ITEMS).map(({ images, ...rest }) => ({
+      ...rest,
+      imageCount: images.length || rest.imageIds?.length || rest.imageCount || 0,
+      imageIds: rest.imageIds?.length ? rest.imageIds : images.map((image) => image.id),
+    })),
   }));
 
-  const nextSession: ChatSession = {
-    id: activeSessionId,
-    turns: persistedTurns,
-    createdAt: turns[0]?.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
   try {
-    const rawStore = window.localStorage.getItem(CHAT_STORE_KEY);
-    const currentStore = rawStore ? (JSON.parse(rawStore) as { activeSessionId?: string; sessions?: ChatSession[] }) : {};
-    const sessions = Array.isArray(currentStore.sessions) ? currentStore.sessions : [];
-    const nextSessions = sessions.filter((session) => session.id !== activeSessionId);
-    nextSessions.unshift(nextSession);
+    const nextStore: SessionStore = {
+      activeSessionId,
+      sessions: persistedSessions,
+    };
 
-    window.localStorage.setItem(
-      CHAT_STORE_KEY,
-      JSON.stringify({
-        activeSessionId,
-        sessions: nextSessions.slice(0, 20),
-      }),
-    );
+    window.localStorage.setItem(CHAT_STORE_KEY, JSON.stringify(nextStore));
   } catch (error) {
-    if (!isStorageQuotaError(error)) {
-      return;
+    if (isStorageQuotaError(error)) {
+      window.localStorage.removeItem(CHAT_STORE_KEY);
     }
-
-    window.localStorage.removeItem(CHAT_STORE_KEY);
   }
+}
+
+async function hydrateSessions(sessions: PersistedChatSession[]): Promise<ChatSession[]> {
+  return Promise.all(
+    sessions.map(async (session) => ({
+      ...session,
+      turns: await hydratePersistedTurns(session.turns),
+    })),
+  );
 }
 
 async function hydratePersistedTurns(turns: PersistedChatTurn[]): Promise<ChatTurn[]> {
@@ -1286,12 +1539,97 @@ async function hydratePersistedTurns(turns: PersistedChatTurn[]): Promise<ChatTu
   );
 }
 
+function normalizeSession(session: Partial<PersistedChatSession>): PersistedChatSession {
+  return {
+    id: typeof session.id === "string" ? session.id : createChatSessionId(),
+    title: typeof session.title === "string" && session.title.trim() ? session.title : "新聊天",
+    pinned: Boolean(session.pinned),
+    turns: Array.isArray(session.turns) ? (session.turns as PersistedChatTurn[]) : [],
+    draft: normalizeDraft(session.draft),
+    createdAt: typeof session.createdAt === "string" ? session.createdAt : new Date().toISOString(),
+    updatedAt: typeof session.updatedAt === "string" ? session.updatedAt : new Date().toISOString(),
+    titleEdited: Boolean(session.titleEdited),
+  };
+}
+
+function normalizeDraft(draft: Partial<ChatDraft> | undefined): ChatDraft {
+  return {
+    prompt: typeof draft?.prompt === "string" ? draft.prompt : "",
+    size: isImageSize(draft?.size) ? draft.size : DEFAULT_DRAFT.size,
+    resolution: isImageResolution(draft?.resolution) ? draft.resolution : DEFAULT_DRAFT.resolution,
+    quality: isImageQuality(draft?.quality) ? draft.quality : DEFAULT_DRAFT.quality,
+    count: typeof draft?.count === "number" && draft.count >= 1 && draft.count <= 4 ? draft.count : DEFAULT_DRAFT.count,
+    referenceImageSource: typeof draft?.referenceImageSource === "string" ? draft.referenceImageSource : "",
+    referenceImageMeta:
+      draft?.referenceImageMeta && typeof draft.referenceImageMeta === "object"
+        ? {
+            name: typeof draft.referenceImageMeta.name === "string" ? draft.referenceImageMeta.name : undefined,
+            type: typeof draft.referenceImageMeta.type === "string" ? draft.referenceImageMeta.type : undefined,
+          }
+        : null,
+  };
+}
+
+function isImageSize(value: unknown): value is ImageSize {
+  return typeof value === "string" && ASPECT_OPTIONS.some((option) => option.size === value);
+}
+
+function isImageResolution(value: unknown): value is ImageResolution {
+  return typeof value === "string" && RESOLUTION_OPTIONS.includes(value as ImageResolution);
+}
+
+function isImageQuality(value: unknown): value is ImageQuality {
+  return typeof value === "string" && QUALITY_OPTIONS.some((option) => option.value === value);
+}
+
+function createBlankSession(): ChatSession {
+  const id = createChatSessionId();
+  const now = new Date().toISOString();
+  return {
+    id,
+    title: "新聊天",
+    pinned: false,
+    turns: [],
+    draft: { ...DEFAULT_DRAFT },
+    createdAt: now,
+    updatedAt: now,
+    titleEdited: false,
+  };
+}
+
+function deriveTitleFromPrompt(prompt: string) {
+  const text = prompt.trim().replace(/\s+/g, " ");
+  if (!text) return "新聊天";
+
+  const firstSentence = text.split(/[\n。.!?！？；;]+/)[0]?.trim() || text;
+  const title = firstSentence.slice(0, 24);
+  return title || "新聊天";
+}
+
 function getImageIdsFromTurns(turns: ChatTurn[]) {
   return turns.flatMap(getImageIdsFromTurn);
 }
 
 function getImageIdsFromTurn(turn: ChatTurn) {
   return turn.imageIds?.length ? turn.imageIds : turn.images.map((image) => image.id);
+}
+
+function getImageIdsFromTurnsFromSession(session: ChatSession) {
+  return session.turns.flatMap((turn) => (turn.imageIds?.length ? turn.imageIds : turn.images.map((image) => image.id)));
+}
+
+function formatSessionTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "刚刚";
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function isStorageQuotaError(error: unknown) {
@@ -1329,31 +1667,6 @@ function createChatTurnId() {
 
 function createChatSessionId() {
   return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-async function buildReferenceFileFromImage(image: GeneratedImage, src: string) {
-  const fileName = `reference-${image.id}.png`;
-
-  if (image.base64) {
-    const blob = base64ToBlob(image.base64);
-    return new File([blob], fileName, { type: blob.type || "image/png" });
-  }
-
-  if (!src) {
-    return null;
-  }
-
-  try {
-    const response = await fetch(`/api/image-proxy?url=${encodeURIComponent(src)}`);
-    if (!response.ok) {
-      return null;
-    }
-
-    const blob = await response.blob();
-    return new File([blob], fileName, { type: blob.type || "image/png" });
-  } catch {
-    return null;
-  }
 }
 
 async function buildReferenceFileFromSource(src: string) {
@@ -1441,4 +1754,13 @@ async function parseGenerateImageResponse(response: Response): Promise<GenerateI
   }
 
   return parsed as GenerateImageResponse;
+}
+
+async function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file."));
+    reader.readAsDataURL(file);
+  });
 }

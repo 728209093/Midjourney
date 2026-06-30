@@ -94,7 +94,7 @@ export async function saveImagesToHistory(images: GeneratedImage[]) {
   });
 }
 
-export async function getImagesFromHistory(ids: string[]) {
+export async function getImagesFromHistory(ids: string[]): Promise<GeneratedImage[]> {
   if (ids.length === 0) {
     return [];
   }
@@ -107,7 +107,8 @@ export async function getImagesFromHistory(ids: string[]) {
       }),
     );
 
-    return images.filter((image): image is GeneratedImage => Boolean(image));
+    const restoredImages: GeneratedImage[] = images.filter((image): image is StoredImage => Boolean(image));
+    return restoredImages;
   });
 }
 

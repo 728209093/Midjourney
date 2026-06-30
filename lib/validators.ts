@@ -1,5 +1,4 @@
 import type {
-  ImageAspectRatio,
   ImageApiConfig,
   ImageGenerateParams,
   ImageQuality,

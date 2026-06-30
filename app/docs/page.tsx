@@ -117,9 +117,9 @@ https://dahlo.live/v1/images/generations`}
               </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-ink/54 p-4">
-              <h3 className="text-sm font-semibold text-white">分辨率</h3>
+              <h3 className="text-sm font-semibold text-white">画幅比例</h3>
               <p className="mt-2 text-sm leading-6 text-stone-400">
-                选择 1K、2K 或 4K。分辨率越高，生成耗时和接口消耗通常越高。
+                选择 1:1、16:9、9:16 等比例，系统会自动换算成对应的宽高尺寸。
               </p>
             </div>
             <div className="rounded-lg border border-white/10 bg-ink/54 p-4">
@@ -131,7 +131,7 @@ https://dahlo.live/v1/images/generations`}
             <div className="rounded-lg border border-white/10 bg-ink/54 p-4">
               <h3 className="text-sm font-semibold text-white">结果操作</h3>
               <p className="mt-2 text-sm leading-6 text-stone-400">
-                生成后可以预览、下载、复制链接、复用参数或删除本地记录。
+                生成后可以预览、下载、复用参数或删除本地记录。
               </p>
             </div>
           </div>

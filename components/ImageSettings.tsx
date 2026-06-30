@@ -1,15 +1,17 @@
 import { Gauge, Images, Ruler } from "lucide-react";
 
+import { IMAGE_ASPECT_RATIO_OPTIONS, formatImageSize } from "@/lib/image-size";
 import { IMAGE_QUALITIES, IMAGE_RESOLUTIONS } from "@/lib/validators";
-import type { ImageMode, ImageQuality, ImageResolution, ImageSize } from "@/types/image";
+import type { ImageAspectRatio, ImageMode, ImageQuality, ImageResolution, ImageSize } from "@/types/image";
 
 type ImageSettingsProps = {
   mode: ImageMode;
   size: ImageSize;
+  aspectRatio: ImageAspectRatio;
   resolution: ImageResolution;
   quality: ImageQuality;
   count: number;
-  onSizeChange: (value: ImageSize) => void;
+  onAspectRatioChange: (value: ImageAspectRatio) => void;
   onModeChange: (value: ImageMode) => void;
   onResolutionChange: (value: ImageResolution) => void;
   onQualityChange: (value: ImageQuality) => void;
@@ -25,11 +27,12 @@ const qualityLabels: Record<ImageQuality, string> = {
 
 export function ImageSettings({
   mode,
-  size,
+  aspectRatio,
   resolution,
   quality,
   count,
   onModeChange,
+  onAspectRatioChange,
   onResolutionChange,
   onQualityChange,
   onCountChange,
@@ -70,13 +73,27 @@ export function ImageSettings({
         <div>
           <label className="mb-2 flex items-center gap-2 text-xs font-medium text-stone-300">
             <Ruler className="size-4 text-mint" aria-hidden />
-            图片尺寸
+            画幅比例
           </label>
-          <div className="flex h-11 items-center justify-between rounded-md border border-white/10 bg-ink px-3 text-sm text-white">
-            <span>{size}</span>
-            <span className="rounded bg-mint/12 px-2 py-1 text-xs font-medium text-mint">
-              正方形
-            </span>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {IMAGE_ASPECT_RATIO_OPTIONS.map((item) => (
+              <button
+                key={item.ratio}
+                type="button"
+                onClick={() => onAspectRatioChange(item.ratio)}
+                disabled={disabled}
+                className={`rounded-md border px-2 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  aspectRatio === item.ratio
+                    ? "border-mint bg-mint text-ink"
+                    : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50"
+                }`}
+              >
+                <span className="block font-medium">{item.label}</span>
+                <span className={`mt-1 block text-[11px] ${aspectRatio === item.ratio ? "text-ink/75" : "text-stone-500"}`}>
+                  {formatImageSize(item.size)}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
 

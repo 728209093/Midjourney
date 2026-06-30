@@ -19,8 +19,15 @@ import {
 import { Header } from "@/components/Header";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { validateApiBaseUrl } from "@/lib/api-url";
-import { cn, downloadImage, getImageSrc } from "@/lib/utils";
+import {
+  IMAGE_ASPECT_RATIO_OPTIONS,
+  formatImageSize,
+  getImageSizeForAspectRatio,
+  inferAspectRatioFromSize,
+} from "@/lib/image-size";
+import { cn, copyTextToClipboard, downloadImage, getImageSrc } from "@/lib/utils";
 import type {
+  ImageAspectRatio,
   GenerateImageResponse,
   GeneratedImage,
   ImageApiConfig,
@@ -104,11 +111,15 @@ export default function Home() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [referenceAction, setReferenceAction] = useState<"attach" | "replace">("attach");
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [ratioMenuOpen, setRatioMenuOpen] = useState(false);
+  const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
+  const ratioSelectRef = useRef<HTMLDivElement>(null);
+  const size = useMemo(() => getImageSizeForAspectRatio(aspectRatio), [aspectRatio]);
 
   const canGenerate = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading]);
 
@@ -204,25 +215,33 @@ export default function Home() {
 
   // ESC 关闭设置弹窗
   useEffect(() => {
-    if (!settingsOpen) return;
+    if (!settingsOpen && !uploadMenuOpen && !ratioMenuOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSettingsOpen(false);
+      if (e.key === "Escape") {
+        setSettingsOpen(false);
+        setUploadMenuOpen(false);
+        setRatioMenuOpen(false);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen]);
+  }, [settingsOpen, uploadMenuOpen, ratioMenuOpen]);
 
-  // 点击菜单外部时收起上传菜单
+  // 点击菜单外部时收起菜单
   useEffect(() => {
-    if (!uploadMenuOpen) return;
+    if (!uploadMenuOpen && !ratioMenuOpen) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (uploadMenuRef.current && !uploadMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (uploadMenuOpen && uploadMenuRef.current && !uploadMenuRef.current.contains(target)) {
         setUploadMenuOpen(false);
+      }
+      if (ratioMenuOpen && ratioSelectRef.current && !ratioSelectRef.current.contains(target)) {
+        setRatioMenuOpen(false);
       }
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [uploadMenuOpen]);
+  }, [uploadMenuOpen, ratioMenuOpen]);
 
   const handleDownload = useCallback((image: GeneratedImage) => {
     const src = getImageSrc(image);
@@ -255,6 +274,8 @@ export default function Home() {
 
     setLoading(true);
     setError("");
+    setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setTurns((current) => [
       ...current,
       {
@@ -337,6 +358,16 @@ export default function Home() {
     setTurns((current) => current.filter((turn) => turn.id !== id));
   }
 
+  async function handleCopyTurnPrompt(turn: ChatTurn) {
+    try {
+      await copyTextToClipboard(turn.prompt);
+      setCopiedTurnId(turn.id);
+      window.setTimeout(() => setCopiedTurnId((current) => (current === turn.id ? null : current)), 1400);
+    } catch {
+      setError("复制失败，请稍后重试。");
+    }
+  }
+
   function handleNewChat() {
     setSessionId(createChatSessionId());
     setTurns([]);
@@ -345,6 +376,8 @@ export default function Home() {
     setReferenceImageSource("");
     setReferencePreviewUrl("");
     setReferenceAction("attach");
+    setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setError("");
     scrollToComposer();
   }
@@ -356,6 +389,8 @@ export default function Home() {
     setReferenceImageSource("");
     setReferencePreviewUrl("");
     setReferenceAction("attach");
+    setUploadMenuOpen(false);
+    setRatioMenuOpen(false);
     setError("");
   }
 
@@ -418,7 +453,7 @@ export default function Home() {
   }
 
   return (
-    <main className="flex h-screen flex-col overflow-hidden">
+    <main className="flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto lg:h-screen lg:overflow-hidden">
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onNewChat={handleNewChat}
@@ -459,11 +494,14 @@ export default function Home() {
                 <Avatar icon={<User className="size-4" aria-hidden />} />
                 <div className="max-w-[min(42rem,82vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
                   <p className="whitespace-pre-wrap text-sm leading-6">{turn.prompt}</p>
-                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2 text-[11px] text-ink/70">
-                    <span>{turn.mode === "edit" ? "图生图" : "文生图"}</span>
-                    <span>{turn.size}</span>
-                    <span>{turn.resolution.toUpperCase()}</span>
-                    <span>{turn.quality}</span>
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyTurnPrompt(turn)}
+                      className="text-xs text-ink/70 transition hover:text-ink"
+                    >
+                      {copiedTurnId === turn.id ? "已复制" : "复制文字"}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -517,6 +555,12 @@ export default function Home() {
 
         <section id="composer" className="mt-4 rounded-lg border border-white/10 bg-panel/80 p-3 shadow-soft">
           <form onSubmit={handleGenerate} className="space-y-3">
+            {error ? (
+              <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">
+                {error}
+              </div>
+            ) : null}
+
             {referencePreviewUrl ? (
               <div className="flex items-center gap-3 rounded-md border border-white/10 bg-white/[0.03] p-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -566,7 +610,7 @@ export default function Home() {
                   onClick={() => setUploadMenuOpen((current) => !current)}
                   disabled={loading}
                   className={cn(
-                    "inline-flex h-14 w-14 items-center justify-center rounded-md border transition",
+                    "inline-flex h-12 w-12 items-center justify-center rounded-md border transition sm:h-14 sm:w-14",
                     referencePreviewUrl
                       ? "border-mint/50 bg-mint/10 text-mint hover:bg-mint hover:text-ink"
                       : "border-white/10 bg-white/[0.04] text-stone-200 hover:border-mint/50 hover:text-mint",
@@ -629,7 +673,7 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={!canGenerate}
-                className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300"
+                className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300 sm:h-14 sm:w-14"
                 title="发送"
               >
                 {loading ? (
@@ -688,12 +732,15 @@ function ParameterSettings({
   onCountChange: (value: number) => void;
 }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-panel/86 p-4 shadow-soft">
+    <section className="rounded-lg border border-white/10 bg-panel/94 p-4 shadow-soft">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-white">生成参数</h2>
           <p className="mt-1 text-xs text-stone-400">影响下一次发送的图片结果</p>
         </div>
+        <p className="text-xs text-stone-400">
+          当前尺寸 <span className="text-white">{formatImageSize(size)}</span>
+        </p>
       </div>
 
       <div className="space-y-4">

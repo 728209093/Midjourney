@@ -13,13 +13,7 @@ type ApiSettingsProps = {
   disabled?: boolean;
 };
 
-export function ApiSettings({
-  value,
-  onChange,
-  onSave,
-  onReset,
-  disabled,
-}: ApiSettingsProps) {
+export function ApiSettings({ value, onChange, onSave, onReset, disabled }: ApiSettingsProps) {
   const [showKey, setShowKey] = useState(false);
 
   function updateField(field: keyof ImageApiConfig, nextValue: string) {
@@ -30,11 +24,11 @@ export function ApiSettings({
   }
 
   return (
-    <section id="settings" className="rounded-lg border border-white/10 bg-panel/86 p-4 shadow-soft">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <section id="settings" className="rounded-lg border border-white/10 bg-panel/94 p-4 shadow-soft sm:p-5">
+      <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-white">API 设置</h2>
-          <p className="mt-1 text-xs text-stone-400">保存在当前浏览器</p>
+          <p className="mt-1 text-xs leading-5 text-stone-400">保存到当前浏览器</p>
         </div>
         <div className="grid size-9 place-items-center rounded-md bg-white/[0.06] text-mint">
           <ServerCog className="size-4" aria-hidden />
@@ -48,7 +42,7 @@ export function ApiSettings({
             type="url"
             value="https://dahlo.live"
             disabled
-            className="h-11 w-full cursor-not-allowed rounded-md border border-white/10 bg-ink px-3 text-sm text-stone-400 opacity-60"
+            className="h-11 w-full cursor-not-allowed rounded-md border border-white/10 bg-ink px-3 text-sm text-stone-400 opacity-70"
           />
         </label>
 
@@ -70,7 +64,7 @@ export function ApiSettings({
               type="button"
               onClick={() => setShowKey((current) => !current)}
               disabled={disabled}
-              className="h-11 rounded-md border border-white/10 px-3 text-xs text-stone-300 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60"
+              className="h-11 min-w-16 rounded-md border border-white/10 px-3 text-xs text-stone-300 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60"
             >
               {showKey ? "隐藏" : "显示"}
             </button>
@@ -111,7 +105,7 @@ export function ApiSettings({
         </div>
 
         <p className="text-xs leading-5 text-stone-500">
-          只填写根域名，例如 `https://dahlo.live`。不要携带 `/v1`，也不要以 `/` 结尾。
+          只填写根域名，例如 `https://dahlo.live`。不要带 `/v1`，也不要以 `/` 结尾。
         </p>
       </div>
     </section>

@@ -9,22 +9,22 @@ type HeaderProps = {
 
 export function Header({ onOpenSettings, onNewChat, onClearChat }: HeaderProps) {
   return (
-    <header className="sticky top-0 z-30 border-b border-white/10 bg-ink/88 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6">
-        <div className="flex items-center gap-3">
-          <div className="grid size-9 place-items-center rounded-md bg-mint text-ink shadow-soft">
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-ink/92 shadow-soft backdrop-blur-xl">
+      <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid size-9 shrink-0 place-items-center rounded-md bg-mint text-ink shadow-soft">
             <Sparkles className="size-5" aria-hidden />
           </div>
-          <div>
+          <div className="hidden min-w-0 sm:block">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mint">天晴了绘图</p>
           </div>
         </div>
 
-        <nav className="flex items-center gap-2" aria-label="主导航">
+        <nav className="flex shrink-0 items-center gap-1 sm:gap-2" aria-label="主导航">
           <button
             type="button"
             onClick={onNewChat}
-            className="inline-flex size-10 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint"
+            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
             title="新建聊天"
           >
             <FilePlus className="size-4" aria-hidden />
@@ -33,7 +33,7 @@ export function Header({ onOpenSettings, onNewChat, onClearChat }: HeaderProps) 
           <button
             type="button"
             onClick={onClearChat}
-            className="inline-flex size-10 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-coral/60 hover:text-coral"
+            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-coral/60 hover:text-coral sm:size-10"
             title="清空当前聊天"
           >
             <Trash2 className="size-4" aria-hidden />
@@ -41,7 +41,7 @@ export function Header({ onOpenSettings, onNewChat, onClearChat }: HeaderProps) 
           </button>
           <Link
             href="/docs"
-            className="inline-flex size-10 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint"
+            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
             title="说明文档"
           >
             <FileText className="size-4" aria-hidden />
@@ -49,7 +49,7 @@ export function Header({ onOpenSettings, onNewChat, onClearChat }: HeaderProps) 
           </Link>
           <a
             href="#history"
-            className="inline-flex size-10 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint"
+            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
             title="历史记录"
           >
             <History className="size-4" aria-hidden />
@@ -58,7 +58,7 @@ export function Header({ onOpenSettings, onNewChat, onClearChat }: HeaderProps) 
           <button
             type="button"
             onClick={onOpenSettings}
-            className="inline-flex size-10 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint"
+            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
             title="设置"
           >
             <Settings className="size-4" aria-hidden />

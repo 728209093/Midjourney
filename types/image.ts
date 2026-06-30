@@ -1,4 +1,12 @@
-export type ImageSize = "1024x1024";
+export type ImageSize =
+  | "1024x1024"
+  | "1536x864"
+  | "864x1536"
+  | "1536x1024"
+  | "1024x1536"
+  | "1408x1056"
+  | "1056x1408"
+  | "1536x656";
 
 export type ImageResolution = "1k" | "2k" | "4k";
 

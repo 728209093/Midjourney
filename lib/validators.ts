@@ -7,7 +7,16 @@ import type {
 } from "@/types/image";
 import { validateApiBaseUrl } from "@/lib/api-url";
 
-export const IMAGE_SIZES: ImageSize[] = ["1024x1024"];
+export const IMAGE_SIZES: ImageSize[] = [
+  "1024x1024",
+  "1536x864",
+  "864x1536",
+  "1536x1024",
+  "1024x1536",
+  "1408x1056",
+  "1056x1408",
+  "1536x656",
+];
 export const IMAGE_RESOLUTIONS: ImageResolution[] = ["1k", "2k", "4k"];
 export const IMAGE_QUALITIES: ImageQuality[] = ["low", "medium", "high"];
 

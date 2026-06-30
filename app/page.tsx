@@ -40,6 +40,17 @@ const DEFAULT_API_CONFIG: ImageApiConfig = {
   model: "gpt-image-2",
 };
 
+const ASPECT_OPTIONS: Array<{ label: string; size: ImageSize; detail: string }> = [
+  { label: "1:1", size: "1024x1024", detail: "1024 x 1024" },
+  { label: "16:9", size: "1536x864", detail: "1536 x 864" },
+  { label: "9:16", size: "864x1536", detail: "864 x 1536" },
+  { label: "3:2", size: "1536x1024", detail: "1536 x 1024" },
+  { label: "2:3", size: "1024x1536", detail: "1024 x 1536" },
+  { label: "4:3", size: "1408x1056", detail: "1408 x 1056" },
+  { label: "3:4", size: "1056x1408", detail: "1056 x 1408" },
+  { label: "21:9", size: "1536x656", detail: "1536 x 656" },
+];
+
 type ChatTurn = {
   id: string;
   prompt: string;
@@ -74,7 +85,7 @@ type SettingsMessage = {
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
-  const [size] = useState<ImageSize>("1024x1024");
+  const [size, setSize] = useState<ImageSize>("1024x1024");
   const [resolution, setResolution] = useState<ImageResolution>("1k");
   const [quality, setQuality] = useState<ImageQuality>("medium");
   const [count, setCount] = useState(1);
@@ -354,6 +365,7 @@ export default function Home() {
 
   function handleReuse(image: GeneratedImage) {
     setPrompt(image.prompt);
+    setSize(image.size || "1024x1024");
     setResolution(image.resolution || "1k");
     setQuality(image.quality);
     scrollToComposer();
@@ -423,15 +435,17 @@ export default function Home() {
         onClose={() => setSettingsOpen(false)}
       >
         <ParameterSettings
+          size={size}
           resolution={resolution}
           count={count}
           loading={loading}
+          onSizeChange={setSize}
           onResolutionChange={setResolution}
           onCountChange={setCount}
         />
       </SettingsDialog>
 
-      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 py-4 sm:px-6">
+      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 pb-4 pt-20 sm:px-6 sm:pt-20">
         <section
           id="history"
           ref={chatRef}
@@ -522,6 +536,12 @@ export default function Home() {
                   移除
                 </button>
               </div>
+            ) : null}
+
+            {error ? (
+              <p className="rounded-md border border-coral/40 bg-coral/[0.12] px-3 py-2 text-xs leading-5 text-coral" role="alert">
+                {error}
+              </p>
             ) : null}
 
             <div className="flex items-end gap-3">
@@ -634,7 +654,7 @@ export default function Home() {
         <button
           type="button"
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: "smooth" })}
-          className="fixed bottom-28 right-4 z-30 inline-flex items-center gap-2 rounded-full border border-white/10 bg-ink/90 px-4 py-2 text-sm text-white shadow-soft backdrop-blur"
+          className="fixed bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full border border-white/10 bg-ink/90 px-4 py-2 text-sm text-white shadow-soft backdrop-blur"
         >
           <ChevronDown className="size-4" aria-hidden />
           回到底部
@@ -651,15 +671,19 @@ export default function Home() {
 }
 
 function ParameterSettings({
+  size,
   resolution,
   count,
   loading,
+  onSizeChange,
   onResolutionChange,
   onCountChange,
 }: {
+  size: ImageSize;
   resolution: ImageResolution;
   count: number;
   loading: boolean;
+  onSizeChange: (value: ImageSize) => void;
   onResolutionChange: (value: ImageResolution) => void;
   onCountChange: (value: number) => void;
 }) {
@@ -673,17 +697,34 @@ function ParameterSettings({
       </div>
 
       <div className="space-y-4">
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-stone-300">分辨率</p>
-          <div className="grid grid-cols-3 gap-2">
-            {(["1k", "2k", "4k"] as const).map((item) => (
-              <ModeChip
-                key={item}
-                label={item.toUpperCase()}
-                active={resolution === item}
-                onClick={() => onResolutionChange(item)}
-              />
-            ))}
+        <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(12rem,0.75fr)]">
+          <div className="min-w-0 space-y-2">
+            <p className="text-xs font-medium text-stone-300">画幅</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-2">
+              {ASPECT_OPTIONS.map((item) => (
+                <AspectChip
+                  key={item.size}
+                  label={item.label}
+                  detail={item.detail}
+                  active={size === item.size}
+                  onClick={() => onSizeChange(item.size)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="min-w-0 space-y-2">
+            <p className="text-xs font-medium text-stone-300">分辨率</p>
+            <div className="grid grid-cols-3 gap-2 xl:grid-cols-1">
+              {(["1k", "2k", "4k"] as const).map((item) => (
+                <ModeChip
+                  key={item}
+                  label={item.toUpperCase()}
+                  active={resolution === item}
+                  onClick={() => onResolutionChange(item)}
+                />
+              ))}
+            </div>
           </div>
         </div>
 
@@ -704,6 +745,34 @@ function ParameterSettings({
         </div>
       </div>
     </section>
+  );
+}
+
+function AspectChip({
+  label,
+  detail,
+  active,
+  onClick,
+}: {
+  label: string;
+  detail: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex min-h-12 min-w-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition",
+        active
+          ? "border-mint bg-mint text-ink"
+          : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50 hover:text-white",
+      )}
+    >
+      <span className="shrink-0 text-sm font-semibold">{label}</span>
+      <span className={cn("truncate text-[11px]", active ? "text-ink/65" : "text-stone-500")}>{detail}</span>
+    </button>
   );
 }
 
@@ -743,7 +812,7 @@ function ModeChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "h-10 rounded-md border px-2 text-sm transition",
+        "h-10 min-w-0 rounded-md border px-2 text-sm transition",
         active
           ? "border-mint bg-mint text-ink"
           : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50",

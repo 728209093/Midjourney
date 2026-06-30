@@ -42,46 +42,47 @@ export function SettingsDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/78 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 grid place-items-end bg-black/78 p-0 backdrop-blur-sm sm:place-items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="设置"
       onClick={onClose}
     >
-      <div
-        className="relative w-full max-w-4xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-md border border-white/10 bg-ink/80 text-stone-300 transition hover:border-mint/50 hover:text-mint"
-          title="关闭"
-        >
-          <X className="size-4" aria-hidden />
-          <span className="sr-only">关闭</span>
-        </button>
-
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-          {children}
-
-          <ApiSettings
-            value={apiConfig}
-            onChange={onApiConfigChange}
-            onSave={onSave}
-            onReset={onReset}
-            disabled={disabled}
-          />
-        </div>
-
-        {message ? (
-          <p
-            className={`mt-3 rounded-md border px-3 py-2.5 text-sm font-medium ${messageClassName}`}
-            role="alert"
+      <div className="relative w-full max-w-4xl" onClick={(event) => event.stopPropagation()}>
+        <div className="max-h-[calc(100vh-1rem)] overflow-hidden rounded-t-2xl border border-white/10 bg-panel/92 shadow-soft sm:max-h-[calc(100vh-2rem)] sm:rounded-lg">
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-md border border-white/10 bg-ink/80 text-stone-300 transition hover:border-mint/50 hover:text-mint"
+            title="关闭"
           >
-            {message.text}
-          </p>
-        ) : null}
+            <X className="size-4" aria-hidden />
+            <span className="sr-only">关闭</span>
+          </button>
+
+          <div className="max-h-[calc(100vh-1rem)] overflow-y-auto p-4 sm:max-h-[calc(100vh-2rem)]">
+            <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+              {children}
+
+              <ApiSettings
+                value={apiConfig}
+                onChange={onApiConfigChange}
+                onSave={onSave}
+                onReset={onReset}
+                disabled={disabled}
+              />
+            </div>
+
+            {message ? (
+              <p
+                className={`mt-3 rounded-md border px-3 py-2.5 text-sm font-medium ${messageClassName}`}
+                role="alert"
+              >
+                {message.text}
+              </p>
+            ) : null}
+          </div>
+        </div>
       </div>
     </div>
   );

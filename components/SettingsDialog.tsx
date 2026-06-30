@@ -72,14 +72,6 @@ export function SettingsDialog({
                 disabled={disabled}
               />
             </div>
-              <ApiSettings
-                value={apiConfig}
-                onChange={onApiConfigChange}
-                onSave={onSave}
-                onReset={onReset}
-                disabled={disabled}
-              />
-            </div>
 
             {message ? (
               <p

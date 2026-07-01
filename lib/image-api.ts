@@ -186,6 +186,7 @@ async function requestProviderImages(context: ProviderRequestContext): Promise<G
         size: context.logMeta.size,
         resolution: context.logMeta.resolution,
         quality: context.logMeta.quality,
+        requestedCount: context.logMeta.n,
         fallbackMessage: context.fallbackMessage,
         endpoint: context.endpoint,
       });
@@ -228,6 +229,7 @@ function normalizeProviderImages({
   size,
   resolution,
   quality,
+  requestedCount,
   fallbackMessage,
   endpoint,
 }: {
@@ -239,6 +241,7 @@ function normalizeProviderImages({
   size: ImageGenerateParams["size"];
   resolution: ImageGenerateParams["resolution"];
   quality: ImageGenerateParams["quality"];
+  requestedCount: number;
   fallbackMessage: string;
   endpoint: string;
 }) {
@@ -267,7 +270,7 @@ function normalizeProviderImages({
     });
   }
 
-  return rawImages.map((image) => ({
+  return rawImages.slice(0, requestedCount).map((image) => ({
     id: createId(),
     url: image.url,
     base64: image.b64_json || image.base64,

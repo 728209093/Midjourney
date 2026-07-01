@@ -60,6 +60,7 @@ const ASPECT_OPTIONS: Array<{ label: string; size: ImageSize; detail: string }> 
 ];
 
 const RESOLUTION_OPTIONS: ImageResolution[] = ["1k", "2k", "4k"];
+const COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const QUALITY_OPTIONS: Array<{ value: ImageQuality; label: string }> = [
   { value: "low", label: "低" },
   { value: "medium", label: "中" },
@@ -143,8 +144,8 @@ export default function Home() {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
-  const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
-  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [aspectPanelOpen, setAspectPanelOpen] = useState(false);
+  const [countPanelOpen, setCountPanelOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [referenceDragging, setReferenceDragging] = useState(false);
@@ -153,8 +154,8 @@ export default function Home() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
-  const aspectMenuRef = useRef<HTMLDivElement>(null);
-  const qualityMenuRef = useRef<HTMLDivElement>(null);
+  const aspectPanelRef = useRef<HTMLDivElement>(null);
+  const countPanelRef = useRef<HTMLDivElement>(null);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || sessions[0] || createBlankSession(),
@@ -180,7 +181,6 @@ export default function Home() {
     () => ASPECT_OPTIONS.find((option) => option.size === activeSession.draft.size) || ASPECT_OPTIONS[0],
     [activeSession.draft.size],
   );
-
   const referencePreviewUrl = activeSession.draft.referenceImageSource;
   useEffect(() => {
     let cancelled = false;
@@ -283,19 +283,19 @@ export default function Home() {
   }, [activeSession.turns, loading, activeSessionId]);
 
   useEffect(() => {
-    if (!settingsOpen && !uploadMenuOpen && !aspectMenuOpen && !qualityMenuOpen) return;
+    if (!settingsOpen && !uploadMenuOpen && !aspectPanelOpen && !countPanelOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSettingsOpen(false);
         setUploadMenuOpen(false);
-        setAspectMenuOpen(false);
-        setQualityMenuOpen(false);
+        setAspectPanelOpen(false);
+        setCountPanelOpen(false);
         setEditingSessionId(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen, uploadMenuOpen, aspectMenuOpen, qualityMenuOpen]);
+  }, [settingsOpen, uploadMenuOpen, aspectPanelOpen, countPanelOpen]);
 
   useEffect(() => {
     if (!uploadMenuOpen) return;
@@ -310,19 +310,19 @@ export default function Home() {
   }, [uploadMenuOpen]);
 
   useEffect(() => {
-    if (!aspectMenuOpen && !qualityMenuOpen) return;
+    if (!aspectPanelOpen && !countPanelOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
-      if (aspectMenuOpen && aspectMenuRef.current && !aspectMenuRef.current.contains(target)) {
-        setAspectMenuOpen(false);
+      if (aspectPanelOpen && aspectPanelRef.current && !aspectPanelRef.current.contains(target)) {
+        setAspectPanelOpen(false);
       }
-      if (qualityMenuOpen && qualityMenuRef.current && !qualityMenuRef.current.contains(target)) {
-        setQualityMenuOpen(false);
+      if (countPanelOpen && countPanelRef.current && !countPanelRef.current.contains(target)) {
+        setCountPanelOpen(false);
       }
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [aspectMenuOpen, qualityMenuOpen]);
+  }, [aspectPanelOpen, countPanelOpen]);
 
   const handleDownload = useCallback((image: GeneratedImage) => {
     const src = getImageSrc(image);
@@ -351,15 +351,11 @@ export default function Home() {
     const turnId = createChatTurnId();
     const createdAt = new Date().toISOString();
     const effectiveMode: ImageMode = currentSession.draft.referenceImageSource ? "edit" : "generate";
-    const referenceImageUrl = currentSession.draft.referenceImageSource.startsWith("data:")
-      ? ""
-      : currentSession.draft.referenceImageSource;
-    const referenceImageFile = currentSession.draft.referenceImageSource.startsWith("data:")
-      ? await buildReferenceFileFromSource(currentSession.draft.referenceImageSource)
-      : null;
+    const referenceImageFile =
+      effectiveMode === "edit" ? await buildReferenceFileFromSource(currentSession.draft.referenceImageSource) : null;
 
-    if (effectiveMode === "edit" && !referenceImageFile && !referenceImageUrl) {
-      setError("参考图暂时读取失败，请重新选择图片后再试。");
+    if (effectiveMode === "edit" && !referenceImageFile) {
+      setError("参考图暂时读取失败，请重新选择/上传参考图后再试。");
       return;
     }
 
@@ -407,7 +403,6 @@ export default function Home() {
                 count: currentSession.draft.count,
                 apiConfig: apiConfigPayload,
                 image: referenceImageFile,
-                referenceImageUrl,
               }),
             })
           : await fetch("/api/generate-image", {
@@ -599,23 +594,35 @@ export default function Home() {
     scrollToComposer();
   }
 
-  function handleContinueEdit(image: GeneratedImage) {
+  async function handleContinueEdit(image: GeneratedImage) {
     const src = getImageSrc(image);
     if (!src) {
       setError("这张图片暂时没有可用的参考图地址，请换一张图片再试。");
       return;
     }
 
+    let referenceImageSource = src;
+    let referenceImageMeta: ChatDraft["referenceImageMeta"] = { name: `reference-${image.id}.png`, type: "image/png" };
+    if (!src.startsWith("data:")) {
+      const file = await buildReferenceFileFromSource(src);
+      if (!file) {
+        setError("这张图片暂时无法作为参考图读取，请下载后重新上传，或换一张图片再试。");
+        return;
+      }
+      referenceImageSource = await readFileAsDataUrl(file);
+      referenceImageMeta = { name: file.name, type: file.type };
+    }
+
     updateActiveSession((session) => ({
       ...session,
       draft: {
         ...session.draft,
-        prompt: image.prompt,
+        prompt: "",
         size: image.size || "1024x1024",
         resolution: image.resolution || "1k",
         quality: image.quality,
-        referenceImageSource: src,
-        referenceImageMeta: { name: `reference-${image.id}.png`, type: "image/png" },
+        referenceImageSource,
+        referenceImageMeta,
       },
       updatedAt: new Date().toISOString(),
     }));
@@ -685,11 +692,23 @@ export default function Home() {
     });
   }
 
-  function handleDropReference(event: React.DragEvent<HTMLLabelElement>) {
+  function handleDropReference(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     setReferenceDragging(false);
     if (loading) return;
-    const file = event.dataTransfer.files?.[0] || null;
+    const file = getFirstImageFileFromDataTransfer(event.dataTransfer);
+    handleReferenceImageFiles(file);
+  }
+
+  function handlePasteReference(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (loading) return;
+
+    const file = getFirstImageFileFromDataTransfer(event.clipboardData);
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
     handleReferenceImageFiles(file);
   }
 
@@ -845,8 +864,8 @@ export default function Home() {
                   <Avatar icon={<Bot className="size-4" aria-hidden />} />
                   <div
                     className={cn(
-                    "min-w-0 rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
-                      turn.status === "loading" ? "w-fit" : "w-full",
+                      "min-w-0 max-w-full rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
+                      turn.status === "error" ? "w-full sm:max-w-[48rem]" : "w-fit",
                     )}
                   >
                     {turn.status === "loading" ? <LoadingBubble count={activeSession.draft.count} /> : null}
@@ -856,7 +875,7 @@ export default function Home() {
                         <p className="text-xs text-stone-400">
                           已生成 {turn.images.length > 0 ? turn.images.length : turn.imageCount || 0} 张图片
                         </p>
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                        <div className="grid max-w-full grid-cols-[repeat(auto-fit,minmax(min(16rem,100%),16rem))] gap-3">
                           {turn.images.map((image) => (
                             <GeneratedImageCard
                               key={image.id}
@@ -890,337 +909,97 @@ export default function Home() {
 
           <section
             id="composer"
-            className="sticky bottom-2 z-30 rounded-lg border border-white/10 bg-panel/90 p-3 shadow-soft backdrop-blur lg:static lg:bottom-auto lg:z-auto lg:bg-panel/80"
+            className={cn(
+              "sticky bottom-2 z-30 rounded-2xl border bg-panel/92 p-3 shadow-soft backdrop-blur lg:static lg:bottom-auto lg:z-auto",
+              referenceDragging ? "border-mint bg-mint/[0.08]" : "border-white/10",
+            )}
+            onDragEnter={() => setReferenceDragging(true)}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setReferenceDragging(true);
+            }}
+            onDragLeave={() => setReferenceDragging(false)}
+            onDrop={handleDropReference}
           >
-            <form
-              onSubmit={handleGenerate}
-              className="grid gap-3 grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] max-[380px]:grid-cols-1 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,23rem)] lg:items-start"
-            >
+            <form onSubmit={handleGenerate} className="space-y-3">
               {error ? (
-                <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100 lg:col-span-2">{error}</div>
+                <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">{error}</div>
               ) : null}
 
-              <div className="space-y-3 min-w-0">
-                {referencePreviewUrl ? (
-                <div
-                  className={cn(
-                    "rounded-md border p-2 transition",
-                    referenceDragging ? "border-mint bg-mint/[0.08]" : "border-white/10 bg-white/[0.03]",
-                  )}
-                >
-                  <label
-                    className="flex cursor-pointer items-center gap-3"
-                    onDragEnter={() => setReferenceDragging(true)}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setReferenceDragging(true);
-                    }}
-                    onDragLeave={() => setReferenceDragging(false)}
-                    onDrop={handleDropReference}
-                  >
-                    <input
-                      ref={imageInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(event) => {
-                        handleReferenceImageFiles(event.target.files?.[0] || null);
-                        event.currentTarget.value = "";
-                      }}
-                      disabled={loading}
-                    />
-                    <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-white/10 bg-ink">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={referencePreviewUrl} alt="参考图预览" className="h-full w-full object-cover" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium text-white">参考图已就绪</p>
-                      <p className="truncate text-xs text-stone-400">
-                        {activeSession.draft.referenceImageMeta?.name || "拖拽图片到这里，或点击更换"}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActiveSessionDraft((draft) => ({
-                          ...draft,
-                          referenceImageSource: "",
-                          referenceImageMeta: null,
-                        }))
-                      }
-                      className="grid size-9 place-items-center rounded-md border border-white/10 text-stone-300 transition hover:border-coral/60 hover:text-coral"
-                      title="移除参考图"
-                    >
-                      <X className="size-4" aria-hidden />
-                      <span className="sr-only">移除参考图</span>
-                    </button>
-                  </label>
-                </div>
-              ) : (
-                <label
-                  className={cn(
-                    "flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed px-4 py-4 text-center transition",
-                    referenceDragging ? "border-mint bg-mint/[0.08]" : "border-white/15 bg-white/[0.03] hover:border-mint/50",
-                  )}
-                  onDragEnter={() => setReferenceDragging(true)}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setReferenceDragging(true);
-                  }}
-                  onDragLeave={() => setReferenceDragging(false)}
-                  onDrop={handleDropReference}
-                >
-                  <input
-                    ref={imageInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(event) => {
-                      handleReferenceImageFiles(event.target.files?.[0] || null);
-                      event.currentTarget.value = "";
-                    }}
-                    disabled={loading}
-                  />
-                  <div className="mx-auto grid size-12 place-items-center rounded-md bg-white/[0.06] text-mint">
-                    <ImagePlus className="size-5" aria-hidden />
+              {referencePreviewUrl ? (
+                <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-2">
+                  <div className="grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg border border-white/10 bg-ink">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={referencePreviewUrl} alt="参考图预览" className="h-full w-full object-cover" />
                   </div>
-                  <p className="mt-3 text-sm font-medium text-white">拖拽图片到这里，或点击上传参考图</p>
-                  <p className="mt-1 text-xs text-stone-500">支持 PNG、JPG、WEBP</p>
-                </label>
-              )}
-
-                <textarea
-                  value={activeSession.draft.prompt}
-                  onChange={(event) =>
-                    setActiveSessionDraft((draft) => ({
-                      ...draft,
-                      prompt: event.target.value,
-                    }))
-                  }
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      event.currentTarget.form?.requestSubmit();
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-white">参考图已就绪</p>
+                    <p className="truncate text-xs text-stone-400">
+                      {activeSession.draft.referenceImageMeta?.name || "拖拽图片到输入区可替换参考图"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActiveSessionDraft((draft) => ({
+                        ...draft,
+                        referenceImageSource: "",
+                        referenceImageMeta: null,
+                      }))
                     }
-                  }}
-                  disabled={loading}
-                  maxLength={2000}
-                  rows={3}
-                  placeholder="输入你想生成或修改的画面..."
-                  className="min-h-[72px] w-full resize-none rounded-md border border-white/10 bg-ink/70 px-3 py-3 text-sm leading-6 text-white placeholder:text-stone-500 transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
-                />
-              </div>
-
-              <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.03] p-3 sm:p-4">
-                <div className="grid grid-cols-2 gap-2">
-                    <div className="col-span-2 space-y-2">
-                    <div className="flex items-center justify-between text-xs text-stone-400">
-                      <span>画幅</span>
-                      <span className="text-white">
-                        {selectedAspectOption.label} · {selectedAspectOption.detail}
-                      </span>
-                    </div>
-                    <div className="sm:hidden" ref={aspectMenuRef}>
-                      <button
-                        type="button"
-                        onClick={() => setAspectMenuOpen((current) => !current)}
-                        disabled={loading}
-                        className="flex h-11 w-full items-center justify-between rounded-md border border-white/10 bg-ink px-3 text-sm text-white transition hover:border-mint/50 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <span className="truncate">{selectedAspectOption.label}</span>
-                        <ChevronDown className="size-4 shrink-0 text-stone-400" aria-hidden />
-                      </button>
-                      {aspectMenuOpen ? (
-                        <div className="mt-2 max-h-60 overflow-auto rounded-md border border-white/10 bg-ink/98 p-1 shadow-soft">
-                          {ASPECT_OPTIONS.map((item) => (
-                            <button
-                              key={item.size}
-                              type="button"
-                              onClick={() => {
-                                setActiveSessionDraft((draft) => ({
-                                  ...draft,
-                                  size: item.size,
-                                }));
-                                setAspectMenuOpen(false);
-                              }}
-                              className={cn(
-                                "flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition",
-                                activeSession.draft.size === item.size
-                                  ? "bg-mint text-ink"
-                                  : "text-stone-200 hover:bg-white/[0.05]",
-                              )}
-                            >
-                              <span className="font-medium">{item.label}</span>
-                              <span className="text-xs opacity-70">{item.detail}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="hidden gap-2 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-                      {ASPECT_OPTIONS.map((item) => (
-                        <AspectChip
-                          key={item.size}
-                          label={item.label}
-                          detail={item.detail}
-                          active={activeSession.draft.size === item.size}
-                          onClick={() =>
-                            setActiveSessionDraft((draft) => ({
-                              ...draft,
-                              size: item.size,
-                            }))
-                          }
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="col-span-2 grid grid-cols-2 gap-2">
-                    <div className="space-y-2 min-w-0">
-                      <div className="flex items-center justify-between text-xs text-stone-400">
-                        <span>分辨率</span>
-                        <span className="text-white">{activeSession.draft.resolution.toUpperCase()}</span>
-                      </div>
-                      <select
-                        value={activeSession.draft.resolution}
-                        onChange={(event) =>
-                          setActiveSessionDraft((draft) => ({
-                            ...draft,
-                            resolution: event.target.value as ImageResolution,
-                          }))
-                        }
-                        disabled={loading}
-                        className="h-10 w-full rounded-md border border-white/10 bg-ink px-3 text-sm text-white transition focus:border-mint disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {RESOLUTION_OPTIONS.map((item) => (
-                          <option key={item} value={item}>
-                            {item.toUpperCase()}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="space-y-2 min-w-0">
-                      <div className="flex items-center justify-between text-xs text-stone-400">
-                        <span>质量</span>
-                        <span className="text-white">
-                          {QUALITY_OPTIONS.find((item) => item.value === activeSession.draft.quality)?.label || "中"}
-                        </span>
-                      </div>
-                      <div className="sm:hidden" ref={qualityMenuRef}>
-                        <button
-                          type="button"
-                          onClick={() => setQualityMenuOpen((current) => !current)}
-                          disabled={loading}
-                          className="flex h-11 w-full items-center justify-between rounded-md border border-white/10 bg-ink px-3 text-sm text-white transition hover:border-mint/50 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <span>{QUALITY_OPTIONS.find((item) => item.value === activeSession.draft.quality)?.label || "中"}</span>
-                          <ChevronDown className="size-4 shrink-0 text-stone-400" aria-hidden />
-                        </button>
-                        {qualityMenuOpen ? (
-                          <div className="mt-2 overflow-hidden rounded-md border border-white/10 bg-ink/98 p-1 shadow-soft">
-                            {QUALITY_OPTIONS.map((item) => (
-                              <button
-                                key={item.value}
-                                type="button"
-                                onClick={() => {
-                                  setActiveSessionDraft((draft) => ({
-                                    ...draft,
-                                    quality: item.value,
-                                  }));
-                                  setQualityMenuOpen(false);
-                                }}
-                                className={cn(
-                                  "flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition",
-                                  activeSession.draft.quality === item.value
-                                    ? "bg-mint text-ink"
-                                    : "text-stone-200 hover:bg-white/[0.05]",
-                                )}
-                              >
-                                <span className="font-medium">{item.label}</span>
-                                <span className="text-xs opacity-70">{item.value.toUpperCase()}</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="hidden grid-cols-3 gap-2 sm:grid">
-                        {QUALITY_OPTIONS.map((item) => (
-                          <button
-                            key={item.value}
-                            type="button"
-                            onClick={() =>
-                              setActiveSessionDraft((draft) => ({
-                                ...draft,
-                                quality: item.value,
-                              }))
-                            }
-                            disabled={loading}
-                            className={cn(
-                              "h-10 rounded-md border px-2 text-sm transition disabled:cursor-not-allowed disabled:opacity-60",
-                              activeSession.draft.quality === item.value
-                                ? "border-mint bg-mint text-ink"
-                                : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50",
-                            )}
-                          >
-                            {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="col-span-2 space-y-2">
-                      <div className="flex items-center justify-between text-xs text-stone-400">
-                        <span>数量</span>
-                        <span className="text-white">{activeSession.draft.count}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={1}
-                        max={4}
-                        value={activeSession.draft.count}
-                        onChange={(event) =>
-                          setActiveSessionDraft((draft) => ({
-                            ...draft,
-                            count: Number(event.target.value),
-                          }))
-                        }
-                        disabled={loading}
-                        className="w-full accent-mint"
-                      />
-                    </div>
-                  </div>
+                    className="grid size-8 place-items-center rounded-md border border-white/10 text-stone-300 transition hover:border-coral/60 hover:text-coral"
+                    title="移除参考图"
+                  >
+                    <X className="size-4" aria-hidden />
+                    <span className="sr-only">移除参考图</span>
+                  </button>
                 </div>
-              </div>
+              ) : null}
 
-              <div className="flex items-end justify-end gap-3 lg:col-span-2">
+              <textarea
+                value={activeSession.draft.prompt}
+                onChange={(event) =>
+                  setActiveSessionDraft((draft) => ({
+                    ...draft,
+                    prompt: event.target.value,
+                  }))
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                onPaste={handlePasteReference}
+                disabled={loading}
+                maxLength={2000}
+                rows={2}
+                placeholder={referencePreviewUrl ? "输入你想如何继续修改这张图..." : "输入你想生成的画面，也可直接粘贴图片"}
+                className="min-h-20 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 text-white outline-none placeholder:text-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+
+              <div className="flex flex-wrap items-center gap-2">
                 <div className="relative shrink-0" ref={uploadMenuRef}>
                   <button
                     type="button"
                     onClick={() => setUploadMenuOpen((current) => !current)}
                     disabled={loading}
-                    className={cn(
-                      "inline-flex h-12 w-12 items-center justify-center rounded-md border transition sm:h-14 sm:w-14",
-                      referencePreviewUrl
-                        ? "border-mint/50 bg-mint/10 text-mint hover:bg-mint hover:text-ink"
-                        : "border-white/10 bg-white/[0.04] text-stone-200 hover:border-mint/50 hover:text-mint",
-                      loading ? "cursor-not-allowed opacity-60" : "",
-                    )}
-                    title="添加图片"
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white/[0.06] px-4 text-sm text-stone-200 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    title="上传图片"
                   >
-                    <ImagePlus className="size-5" aria-hidden />
-                    <span className="sr-only">添加图片</span>
+                    <ImagePlus className="size-4" aria-hidden />
+                    上传
                   </button>
 
                   {uploadMenuOpen ? (
-                    <div className="absolute bottom-full right-0 mb-2 w-36 overflow-hidden rounded-md border border-white/10 bg-ink/95 shadow-soft">
+                    <div className="absolute bottom-full left-0 z-40 mb-2 w-36 overflow-hidden rounded-xl border border-white/10 bg-ink/95 p-1 shadow-soft">
                       <button
                         type="button"
                         onClick={() => {
                           setUploadMenuOpen(false);
                           imageInputRef.current?.click();
                         }}
-                        className="block w-full px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.05]"
+                        className="block w-full rounded-lg px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.06]"
                       >
                         从相册选择
                       </button>
@@ -1230,7 +1009,7 @@ export default function Home() {
                           setUploadMenuOpen(false);
                           cameraInputRef.current?.click();
                         }}
-                        className="block w-full px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.05]"
+                        className="block w-full rounded-lg px-3 py-2 text-left text-sm text-stone-200 transition hover:bg-white/[0.06]"
                       >
                         直接拍照
                       </button>
@@ -1238,6 +1017,17 @@ export default function Home() {
                   ) : null}
                 </div>
 
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(event) => {
+                    handleReferenceImageFiles(event.target.files?.[0] || null);
+                    event.currentTarget.value = "";
+                  }}
+                  disabled={loading}
+                />
                 <input
                   ref={cameraInputRef}
                   type="file"
@@ -1251,10 +1041,151 @@ export default function Home() {
                   disabled={loading}
                 />
 
+                <div className="hidden h-10 items-center rounded-full bg-white/[0.05] px-4 text-sm text-stone-300 sm:inline-flex">
+                  模型&nbsp;<span className="max-w-[14rem] truncate text-white">{apiConfig.model || "gpt-image-2"}</span>
+                </div>
+
+                <div className="relative shrink-0" ref={countPanelRef}>
+                  <button
+                    type="button"
+                    onClick={() => setCountPanelOpen((current) => !current)}
+                    disabled={loading}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white/[0.06] px-4 text-sm text-stone-200 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    张数 <span className="text-white">{activeSession.draft.count}</span>
+                    <ChevronDown className={cn("size-4 transition", countPanelOpen ? "rotate-180" : "")} aria-hidden />
+                  </button>
+
+                  {countPanelOpen ? (
+                    <div className="absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border border-white/10 bg-panel/98 p-3 shadow-soft">
+                      <p className="mb-2 px-1 text-xs text-stone-400">生成数量</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {COUNT_OPTIONS.map((item) => (
+                          <button
+                            key={item}
+                            type="button"
+                            onClick={() => {
+                              setActiveSessionDraft((draft) => ({ ...draft, count: item }));
+                              setCountPanelOpen(false);
+                            }}
+                            disabled={loading}
+                            className={cn(
+                              "h-10 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                              activeSession.draft.count === item
+                                ? "bg-mint text-ink"
+                                : "bg-white/[0.06] text-stone-200 hover:bg-white/[0.1]",
+                            )}
+                          >
+                            {item}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="relative shrink-0" ref={aspectPanelRef}>
+                  <button
+                    type="button"
+                    onClick={() => setAspectPanelOpen((current) => !current)}
+                    disabled={loading}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white/[0.06] px-4 text-sm text-stone-200 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    比例 <span className="text-white">{selectedAspectOption.label}</span>
+                    <ChevronDown className={cn("size-4 transition", aspectPanelOpen ? "rotate-180" : "")} aria-hidden />
+                  </button>
+
+                  {aspectPanelOpen ? (
+                    <div className="absolute bottom-full right-0 z-40 mb-2 max-h-[70vh] w-[min(23rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-white/10 bg-panel/98 p-3 shadow-soft">
+                      <p className="mb-2 px-1 text-xs text-stone-400">画面比例</p>
+                      <div className="space-y-1">
+                        {ASPECT_OPTIONS.map((item) => (
+                          <button
+                            key={item.size}
+                            type="button"
+                            onClick={() =>
+                              setActiveSessionDraft((draft) => ({
+                                ...draft,
+                                size: item.size,
+                              }))
+                            }
+                            disabled={loading}
+                            className={cn(
+                              "flex h-11 w-full items-center justify-between rounded-xl px-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
+                              activeSession.draft.size === item.size
+                                ? "bg-mint text-ink"
+                                : "text-stone-200 hover:bg-white/[0.06]",
+                            )}
+                          >
+                            <span className="font-semibold">{item.label}</span>
+                            <span className={cn("text-xs", activeSession.draft.size === item.size ? "text-ink/60" : "text-stone-500")}>
+                              {item.detail}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 border-t border-white/10 pt-3">
+                        <p className="mb-2 px-1 text-xs text-stone-400">分辨率</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {RESOLUTION_OPTIONS.map((item) => (
+                            <button
+                              key={item}
+                              type="button"
+                              onClick={() =>
+                                setActiveSessionDraft((draft) => ({
+                                  ...draft,
+                                  resolution: item,
+                                }))
+                              }
+                              disabled={loading}
+                              className={cn(
+                                "h-10 rounded-xl text-sm font-medium uppercase transition disabled:cursor-not-allowed disabled:opacity-60",
+                                activeSession.draft.resolution === item
+                                  ? "bg-mint text-ink"
+                                  : "bg-white/[0.06] text-stone-200 hover:bg-white/[0.1]",
+                              )}
+                            >
+                              {item}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 border-t border-white/10 pt-3">
+                        <p className="mb-2 px-1 text-xs text-stone-400">质量</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {QUALITY_OPTIONS.map((item) => (
+                            <button
+                              key={item.value}
+                              type="button"
+                              onClick={() =>
+                                setActiveSessionDraft((draft) => ({
+                                  ...draft,
+                                  quality: item.value,
+                                }))
+                              }
+                              disabled={loading}
+                              className={cn(
+                                "h-10 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                                activeSession.draft.quality === item.value
+                                  ? "bg-mint text-ink"
+                                  : "bg-white/[0.06] text-stone-200 hover:bg-white/[0.1]",
+                              )}
+                            >
+                              {item.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
                 <button
                   type="submit"
                   disabled={!canGenerate}
-                  className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300 sm:h-14 sm:w-14"
+                  className="ml-auto inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300"
                   title="发送"
                 >
                   {loading ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <SendHorizontal className="size-5" aria-hidden />}
@@ -1385,7 +1316,7 @@ function ImagePreviewDialog({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-6" onClick={(event) => event.stopPropagation()}>
+      <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-6">
         <div className="grid min-h-full place-items-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -1393,38 +1324,11 @@ function ImagePreviewDialog({
             alt={image.prompt}
             className="max-h-[calc(100vh-7rem)] max-w-full rounded-md object-contain shadow-soft transition-transform duration-150"
             style={{ transform: `scale(${zoom})` }}
+            onClick={(event) => event.stopPropagation()}
           />
         </div>
       </div>
     </div>
-  );
-}
-
-function AspectChip({
-  label,
-  detail,
-  active,
-  onClick,
-}: {
-  label: string;
-  detail: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex min-h-12 min-w-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition",
-        active
-          ? "border-mint bg-mint text-ink"
-          : "border-white/10 bg-white/[0.03] text-stone-300 hover:border-mint/50 hover:text-white",
-      )}
-    >
-      <span className="shrink-0 text-sm font-semibold">{label}</span>
-      <span className={cn("truncate text-[11px]", active ? "text-ink/65" : "text-stone-500")}>{detail}</span>
-    </button>
   );
 }
 
@@ -1663,7 +1567,7 @@ function normalizeDraft(draft: Partial<ChatDraft> | undefined): ChatDraft {
     size: isImageSize(draft?.size) ? draft.size : DEFAULT_DRAFT.size,
     resolution: isImageResolution(draft?.resolution) ? draft.resolution : DEFAULT_DRAFT.resolution,
     quality: isImageQuality(draft?.quality) ? draft.quality : DEFAULT_DRAFT.quality,
-    count: typeof draft?.count === "number" && draft.count >= 1 && draft.count <= 4 ? draft.count : DEFAULT_DRAFT.count,
+    count: typeof draft?.count === "number" && draft.count >= 1 && draft.count <= 9 ? draft.count : DEFAULT_DRAFT.count,
     referenceImageSource: typeof draft?.referenceImageSource === "string" ? draft.referenceImageSource : "",
     referenceImageMeta:
       draft?.referenceImageMeta && typeof draft.referenceImageMeta === "object"
@@ -1774,31 +1678,79 @@ function createChatSessionId() {
   return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-async function buildReferenceFileFromSource(src: string) {
-  if (!src) {
-    return null;
+function getFirstImageFileFromDataTransfer(dataTransfer: DataTransfer) {
+  const itemFile = Array.from(dataTransfer.items || [])
+    .find((item) => item.kind === "file" && item.type.startsWith("image/"))
+    ?.getAsFile();
+
+  if (itemFile) {
+    return itemFile;
   }
 
-  if (src.startsWith("data:")) {
-    const blob = base64ToBlob(src);
-    return new File([blob], "reference.png", { type: blob.type || "image/png" });
-  }
-
-  try {
-    const response = await fetch(`/api/image-proxy?url=${encodeURIComponent(src)}`);
-    if (!response.ok) {
-      return null;
-    }
-
-    const blob = await response.blob();
-    return new File([blob], "reference.png", { type: blob.type || "image/png" });
-  } catch {
-    return null;
-  }
+  return Array.from(dataTransfer.files || []).find((file) => file.type.startsWith("image/")) || null;
 }
 
-function base64ToBlob(input: string) {
-  const raw = input.startsWith("data:") ? input.split(",")[1] || "" : input;
+async function buildReferenceFileFromSource(src: string) {
+  const normalizedSrc = src.trim();
+  if (!normalizedSrc) {
+    return null;
+  }
+
+  if (normalizedSrc.startsWith("data:")) {
+    try {
+      const blob = dataUrlToBlob(normalizedSrc);
+      if (!blob.type.startsWith("image/")) {
+        return null;
+      }
+
+      return new File([blob], getReferenceFileName(blob.type), { type: blob.type || "image/png" });
+    } catch {
+      return null;
+    }
+  }
+
+  const blob = await fetchImageBlob(normalizedSrc);
+  if (!blob) {
+    return null;
+  }
+
+  return new File([blob], getReferenceFileName(blob.type), { type: blob.type || "image/png" });
+}
+
+async function fetchImageBlob(src: string) {
+  const candidates = /^https?:\/\//i.test(src)
+    ? [src, `/api/image-proxy?url=${encodeURIComponent(src)}`]
+    : [src];
+
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(candidate, { cache: "no-store" });
+      if (!response.ok) {
+        continue;
+      }
+
+      const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "";
+      const blob = await response.blob();
+      const type = blob.type || contentType;
+      if (!type.startsWith("image/") || blob.size === 0) {
+        continue;
+      }
+
+      return blob.type ? blob : new Blob([blob], { type });
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return null;
+}
+
+function dataUrlToBlob(input: string) {
+  const [metadata = "", payload = ""] = input.split(",");
+  const mimeMatch = /^data:([^;,]+)/i.exec(metadata);
+  const mimeType = mimeMatch?.[1] || "image/png";
+  const isBase64 = metadata.toLowerCase().includes(";base64");
+  const raw = isBase64 ? payload : btoa(decodeURIComponent(payload));
   const binary = atob(raw);
   const bytes = new Uint8Array(binary.length);
 
@@ -1806,7 +1758,13 @@ function base64ToBlob(input: string) {
     bytes[index] = binary.charCodeAt(index);
   }
 
-  return new Blob([bytes], { type: "image/png" });
+  return new Blob([bytes], { type: mimeType });
+}
+
+function getReferenceFileName(type: string) {
+  if (type === "image/jpeg") return "reference.jpg";
+  if (type === "image/webp") return "reference.webp";
+  return "reference.png";
 }
 
 function getFriendlyGenerateErrorMessage(error: unknown) {

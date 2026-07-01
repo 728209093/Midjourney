@@ -61,8 +61,8 @@ export function validateGenerateRequest(input: unknown):
     return { ok: false, message: "图片质量不在允许范围内。" };
   }
 
-  if (!Number.isInteger(n) || n < 1 || n > 4) {
-    return { ok: false, message: "生成数量必须是 1 到 4 之间的整数。" };
+  if (!Number.isInteger(n) || n < 1 || n > 9) {
+    return { ok: false, message: "生成数量必须是 1 到 9 之间的整数。" };
   }
 
   const apiConfig = parseApiConfig(body.apiConfig);

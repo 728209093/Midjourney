@@ -153,7 +153,7 @@ export function ImageSettings({
           <input
             type="range"
             min={1}
-            max={4}
+            max={9}
             value={count}
             onChange={(event) => onCountChange(Number(event.target.value))}
             disabled={disabled}
@@ -162,7 +162,7 @@ export function ImageSettings({
           <div className="mt-2 flex justify-between text-xs text-stone-400">
             <span>1 张</span>
             <span className="font-semibold text-white">{count} 张</span>
-            <span>4 张</span>
+            <span>9 张</span>
           </div>
         </div>
       </div>

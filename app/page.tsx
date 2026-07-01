@@ -149,6 +149,7 @@ export default function Home() {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [referenceDragging, setReferenceDragging] = useState(false);
+  const [pendingDeleteTurnId, setPendingDeleteTurnId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -302,6 +303,19 @@ export default function Home() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [settingsOpen, uploadMenuOpen, aspectPanelOpen, countPanelOpen]);
+
+  useEffect(() => {
+    if (!pendingDeleteTurnId) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPendingDeleteTurnId(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pendingDeleteTurnId]);
 
   useEffect(() => {
     if (!uploadMenuOpen) return;
@@ -490,6 +504,14 @@ export default function Home() {
       return;
     }
 
+    setPendingDeleteTurnId(id);
+  }
+
+  function confirmDeleteTurn() {
+    const id = pendingDeleteTurnId;
+    if (!id) return;
+
+    const target = activeSession.turns.find((turn) => turn.id === id);
     if (target) {
       void deleteImagesFromHistory(getImageIdsFromTurn(target)).catch((storageError) => {
         console.warn("[image-history] failed to delete turn images", storageError);
@@ -501,6 +523,11 @@ export default function Home() {
       updatedAt: new Date().toISOString(),
       turns: session.turns.filter((turn) => turn.id !== id),
     }));
+    setPendingDeleteTurnId(null);
+  }
+
+  function closeDeleteTurnDialog() {
+    setPendingDeleteTurnId(null);
   }
 
   async function handleCopyTurnPrompt(turn: ChatTurn) {
@@ -1241,6 +1268,37 @@ export default function Home() {
           <ChevronDown className="size-4" aria-hidden />
           回到底部
         </button>
+      ) : null}
+
+      {pendingDeleteTurnId ? (
+        <div
+          className="fixed inset-0 z-[70] grid place-items-center bg-black/78 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="确认删除这一轮"
+          onClick={closeDeleteTurnDialog}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-panel p-4 shadow-soft" onClick={(event) => event.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-white">确认删除这一轮？</h3>
+            <p className="mt-2 text-sm leading-6 text-stone-400">删除后这一轮内容和图片都会移除，无法恢复。</p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeDeleteTurnDialog}
+                className="inline-flex h-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] px-3 text-sm text-stone-200 transition hover:border-mint/50 hover:text-mint"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteTurn}
+                className="inline-flex h-9 items-center justify-center rounded-md border border-coral/40 bg-coral/15 px-3 text-sm text-coral transition hover:bg-coral hover:text-ink"
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       <ImagePreviewDialog image={previewImage} onClose={() => setPreviewImage(null)} onDownload={handleDownload} />

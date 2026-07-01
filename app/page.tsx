@@ -86,6 +86,7 @@ type ChatTurn = {
   size: ImageSize;
   resolution: ImageResolution;
   quality: ImageQuality;
+  count?: number;
   createdAt: string;
   status: "done" | "loading" | "error";
   error?: string;
@@ -135,7 +136,6 @@ export default function Home() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => [createBlankSession()]);
   const [activeSessionId, setActiveSessionId] = useState(() => createChatSessionId());
   const [apiConfig, setApiConfig] = useState<ImageApiConfig>(DEFAULT_API_CONFIG);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [settingsMessage, setSettingsMessage] = useState<SettingsMessage | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -156,11 +156,13 @@ export default function Home() {
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const aspectPanelRef = useRef<HTMLDivElement>(null);
   const countPanelRef = useRef<HTMLDivElement>(null);
+  const activeSessionIdRef = useRef(activeSessionId);
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || sessions[0] || createBlankSession(),
     [sessions, activeSessionId],
   );
+  const activeSessionGenerating = hasLoadingTurn(activeSession);
 
   const sortedSessions = useMemo(() => {
     return [...sessions].sort((left, right) => {
@@ -173,8 +175,8 @@ export default function Home() {
   }, [sessions]);
 
   const canGenerate = useMemo(
-    () => activeSession.draft.prompt.trim().length > 0 && !loading,
-    [activeSession.draft.prompt, loading],
+    () => activeSession.draft.prompt.trim().length > 0 && !activeSessionGenerating,
+    [activeSession.draft.prompt, activeSessionGenerating],
   );
 
   const selectedAspectOption = useMemo(
@@ -182,6 +184,10 @@ export default function Home() {
     [activeSession.draft.size],
   );
   const referencePreviewUrl = activeSession.draft.referenceImageSource;
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -280,7 +286,7 @@ export default function Home() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [activeSession.turns, loading, activeSessionId]);
+  }, [activeSession.turns, activeSessionId]);
 
   useEffect(() => {
     if (!settingsOpen && !uploadMenuOpen && !aspectPanelOpen && !countPanelOpen) return;
@@ -338,6 +344,10 @@ export default function Home() {
     [activeSessionId],
   );
 
+  const updateSessionById = useCallback((sessionId: string, updater: (session: ChatSession) => ChatSession) => {
+    setSessions((current) => current.map((session) => (session.id === sessionId ? updater(session) : session)));
+  }, []);
+
   async function handleGenerate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -347,7 +357,13 @@ export default function Home() {
       return;
     }
 
+    if (activeSessionGenerating) {
+      setError("当前聊天正在生图，请稍后再发起新的生成。");
+      return;
+    }
+
     const currentSession = activeSession;
+    const generationSessionId = currentSession.id;
     const turnId = createChatTurnId();
     const createdAt = new Date().toISOString();
     const effectiveMode: ImageMode = currentSession.draft.referenceImageSource ? "edit" : "generate";
@@ -359,11 +375,10 @@ export default function Home() {
       return;
     }
 
-    setLoading(true);
     setError("");
     setUploadMenuOpen(false);
 
-    updateActiveSession((session) => ({
+    updateSessionById(generationSessionId, (session) => ({
       ...session,
       updatedAt: createdAt,
       title: session.titleEdited ? session.title : session.title || deriveTitleFromPrompt(promptText),
@@ -377,6 +392,7 @@ export default function Home() {
           size: session.draft.size,
           resolution: session.draft.resolution,
           quality: session.draft.quality,
+          count: session.draft.count,
           createdAt,
           status: "loading",
         },
@@ -433,7 +449,7 @@ export default function Home() {
         console.warn("[image-history] failed to save generated images", storageError);
       }
 
-      updateActiveSession((session) => {
+      updateSessionById(generationSessionId, (session) => {
         const nextTitle = session.titleEdited ? session.title : deriveTitleFromPrompt(promptText) || session.title;
         return {
           ...session,
@@ -447,25 +463,33 @@ export default function Home() {
         };
       });
 
-      setActiveSessionDraft((draft) => ({
-        ...draft,
-        prompt: "",
+      updateSessionById(generationSessionId, (session) => ({
+        ...session,
+        draft: {
+          ...session.draft,
+          prompt: "",
+        },
       }));
     } catch (requestError) {
       const message = getFriendlyGenerateErrorMessage(requestError);
-      updateActiveSession((session) => ({
+      updateSessionById(generationSessionId, (session) => ({
         ...session,
         updatedAt: new Date().toISOString(),
         turns: session.turns.map((turn) => (turn.id === turnId ? { ...turn, status: "error", error: message } : turn)),
       }));
-      setError(message);
-    } finally {
-      setLoading(false);
+      if (activeSessionIdRef.current === generationSessionId) {
+        setError(message);
+      }
     }
   }
 
   function handleDeleteTurn(id: string) {
     const target = activeSession.turns.find((turn) => turn.id === id);
+    if (target?.status === "loading") {
+      setError("这一轮正在生图，完成后再删除。");
+      return;
+    }
+
     if (target) {
       void deleteImagesFromHistory(getImageIdsFromTurn(target)).catch((storageError) => {
         console.warn("[image-history] failed to delete turn images", storageError);
@@ -490,7 +514,6 @@ export default function Home() {
   }
 
   function handleNewChat() {
-    if (loading) return;
     const nextSession = createBlankSession();
     setSessions((current) => [nextSession, ...current.filter((session) => session.id !== nextSession.id)].slice(0, MAX_SESSION_ITEMS));
     setActiveSessionId(nextSession.id);
@@ -500,7 +523,11 @@ export default function Home() {
   }
 
   function handleClearChat() {
-    if (loading) return;
+    if (activeSessionGenerating) {
+      setError("当前聊天正在生图，完成后再清空。");
+      return;
+    }
+
     void deleteImagesFromHistory(getImageIdsFromTurns(activeSession.turns)).catch((storageError) => {
       console.warn("[image-history] failed to clear chat images", storageError);
     });
@@ -519,14 +546,12 @@ export default function Home() {
   }
 
   function handleSwitchSession(sessionId: string) {
-    if (loading) return;
     setActiveSessionId(sessionId);
     setEditingSessionId(null);
     setError("");
   }
 
   function handleTogglePin(sessionId: string) {
-    if (loading) return;
     setSessions((current) =>
       current.map((session) =>
         session.id === sessionId ? { ...session, pinned: !session.pinned, updatedAt: new Date().toISOString() } : session,
@@ -535,8 +560,14 @@ export default function Home() {
   }
 
   function handleDeleteSession(sessionId: string) {
-    if (loading) return;
     const target = sessions.find((session) => session.id === sessionId);
+    if (target && hasLoadingTurn(target)) {
+      if (sessionId === activeSessionId) {
+        setError("这个聊天正在生图，完成后再删除。");
+      }
+      return;
+    }
+
     if (target) {
       void deleteImagesFromHistory(getImageIdsFromTurnsFromSession(target)).catch((storageError) => {
         console.warn("[image-history] failed to delete session images", storageError);
@@ -560,7 +591,6 @@ export default function Home() {
   }
 
   function beginRenameSession(session: ChatSession) {
-    if (loading) return;
     setEditingSessionId(session.id);
     setEditingTitle(session.title);
   }
@@ -695,13 +725,13 @@ export default function Home() {
   function handleDropReference(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     setReferenceDragging(false);
-    if (loading) return;
+    if (activeSessionGenerating) return;
     const file = getFirstImageFileFromDataTransfer(event.dataTransfer);
     handleReferenceImageFiles(file);
   }
 
   function handlePasteReference(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    if (loading) return;
+    if (activeSessionGenerating) return;
 
     const file = getFirstImageFileFromDataTransfer(event.clipboardData);
     if (!file) {
@@ -720,7 +750,7 @@ export default function Home() {
         open={settingsOpen}
         apiConfig={apiConfig}
         message={settingsMessage}
-        disabled={loading}
+        disabled={activeSessionGenerating}
         onApiConfigChange={setApiConfig}
         onSave={handleSaveApiConfig}
         onReset={handleResetApiConfig}
@@ -737,7 +767,6 @@ export default function Home() {
             <button
               type="button"
               onClick={handleNewChat}
-              disabled={loading}
               className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60"
               title="新建聊天"
             >
@@ -751,6 +780,8 @@ export default function Home() {
               {sortedSessions.map((session) => {
                 const active = session.id === activeSessionId;
                 const editing = editingSessionId === session.id;
+                const sessionGenerating = hasLoadingTurn(session);
+                const sessionFailed = hasErrorTurn(session);
                 return (
                   <div
                     key={session.id}
@@ -763,7 +794,6 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => handleSwitchSession(session.id)}
-                        disabled={loading}
                         className="min-w-0 flex-1 text-left"
                       >
                         {editing ? (
@@ -789,9 +819,15 @@ export default function Home() {
                             <div className="flex items-center gap-2">
                               <p className="truncate text-sm font-medium text-white">{session.title}</p>
                               {session.pinned ? <Pin className="size-3.5 text-gold" aria-hidden /> : null}
+                              {sessionGenerating ? <Loader2 className="size-3.5 shrink-0 animate-spin text-mint" aria-hidden /> : null}
                             </div>
-                            <p className="mt-1 text-xs text-stone-400">
-                              {session.turns.length} 轮 · {formatSessionTime(session.updatedAt)}
+                            <p
+                              className={cn(
+                                "mt-1 text-xs",
+                                sessionGenerating ? "text-mint" : sessionFailed ? "text-coral" : "text-stone-400",
+                              )}
+                            >
+                              {getSessionStatusText(session)}
                             </p>
                           </>
                         )}
@@ -801,7 +837,6 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => handleTogglePin(session.id)}
-                          disabled={loading}
                           className="grid size-8 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-300 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-50"
                           title={session.pinned ? "取消置顶" : "置顶"}
                         >
@@ -810,7 +845,6 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => beginRenameSession(session)}
-                          disabled={loading}
                           className="grid size-8 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-300 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-50"
                           title="重命名"
                         >
@@ -819,9 +853,9 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => handleDeleteSession(session.id)}
-                          disabled={loading}
+                          disabled={sessionGenerating}
                           className="grid size-8 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-300 transition hover:border-coral/60 hover:text-coral disabled:cursor-not-allowed disabled:opacity-50"
-                          title="删除聊天"
+                          title={sessionGenerating ? "生成中，暂不能删除" : "删除聊天"}
                         >
                           <Trash2 className="size-3.5" aria-hidden />
                         </button>
@@ -868,7 +902,7 @@ export default function Home() {
                       turn.status === "error" ? "w-full sm:max-w-[48rem]" : "w-fit",
                     )}
                   >
-                    {turn.status === "loading" ? <LoadingBubble count={activeSession.draft.count} /> : null}
+                    {turn.status === "loading" ? <LoadingBubble count={turn.count || 1} /> : null}
                     {turn.status === "error" ? <p className="text-sm leading-6 text-rose-200">{turn.error}</p> : null}
                     {turn.status === "done" ? (
                       <div className="space-y-3">
@@ -896,7 +930,8 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => handleDeleteTurn(turn.id)}
-                    className="text-xs text-stone-500 transition hover:text-stone-300"
+                    disabled={turn.status === "loading"}
+                    className="text-xs text-stone-500 transition hover:text-stone-300 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     删除这一轮
                   </button>
@@ -971,7 +1006,7 @@ export default function Home() {
                   }
                 }}
                 onPaste={handlePasteReference}
-                disabled={loading}
+                disabled={activeSessionGenerating}
                 maxLength={2000}
                 rows={2}
                 placeholder={referencePreviewUrl ? "输入你想如何继续修改这张图..." : "输入你想生成的画面，也可直接粘贴图片"}
@@ -983,7 +1018,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setUploadMenuOpen((current) => !current)}
-                    disabled={loading}
+                    disabled={activeSessionGenerating}
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white/[0.06] px-4 text-sm text-stone-200 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                     title="上传图片"
                   >
@@ -1026,7 +1061,7 @@ export default function Home() {
                     handleReferenceImageFiles(event.target.files?.[0] || null);
                     event.currentTarget.value = "";
                   }}
-                  disabled={loading}
+                  disabled={activeSessionGenerating}
                 />
                 <input
                   ref={cameraInputRef}
@@ -1038,7 +1073,7 @@ export default function Home() {
                     handleReferenceImageFiles(event.target.files?.[0] || null);
                     event.currentTarget.value = "";
                   }}
-                  disabled={loading}
+                  disabled={activeSessionGenerating}
                 />
 
                 <div className="hidden h-10 items-center rounded-full bg-white/[0.05] px-4 text-sm text-stone-300 sm:inline-flex">
@@ -1049,7 +1084,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setCountPanelOpen((current) => !current)}
-                    disabled={loading}
+                    disabled={activeSessionGenerating}
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white/[0.06] px-4 text-sm text-stone-200 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     张数 <span className="text-white">{activeSession.draft.count}</span>
@@ -1057,7 +1092,7 @@ export default function Home() {
                   </button>
 
                   {countPanelOpen ? (
-                    <div className="absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border border-white/10 bg-panel/98 p-3 shadow-soft">
+                    <div className="absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
                       <p className="mb-2 px-1 text-xs text-stone-400">生成数量</p>
                       <div className="grid grid-cols-3 gap-2">
                         {COUNT_OPTIONS.map((item) => (
@@ -1068,7 +1103,7 @@ export default function Home() {
                               setActiveSessionDraft((draft) => ({ ...draft, count: item }));
                               setCountPanelOpen(false);
                             }}
-                            disabled={loading}
+                            disabled={activeSessionGenerating}
                             className={cn(
                               "h-10 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
                               activeSession.draft.count === item
@@ -1088,7 +1123,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setAspectPanelOpen((current) => !current)}
-                    disabled={loading}
+                    disabled={activeSessionGenerating}
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-white/[0.06] px-4 text-sm text-stone-200 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     比例 <span className="text-white">{selectedAspectOption.label}</span>
@@ -1096,7 +1131,7 @@ export default function Home() {
                   </button>
 
                   {aspectPanelOpen ? (
-                    <div className="absolute bottom-full right-0 z-40 mb-2 max-h-[70vh] w-[min(23rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-white/10 bg-panel/98 p-3 shadow-soft">
+                    <div className="absolute bottom-full right-0 z-40 mb-2 max-h-[70vh] w-[min(23rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
                       <p className="mb-2 px-1 text-xs text-stone-400">画面比例</p>
                       <div className="space-y-1">
                         {ASPECT_OPTIONS.map((item) => (
@@ -1109,7 +1144,7 @@ export default function Home() {
                                 size: item.size,
                               }))
                             }
-                            disabled={loading}
+                            disabled={activeSessionGenerating}
                             className={cn(
                               "flex h-11 w-full items-center justify-between rounded-xl px-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
                               activeSession.draft.size === item.size
@@ -1138,7 +1173,7 @@ export default function Home() {
                                   resolution: item,
                                 }))
                               }
-                              disabled={loading}
+                              disabled={activeSessionGenerating}
                               className={cn(
                                 "h-10 rounded-xl text-sm font-medium uppercase transition disabled:cursor-not-allowed disabled:opacity-60",
                                 activeSession.draft.resolution === item
@@ -1165,7 +1200,7 @@ export default function Home() {
                                   quality: item.value,
                                 }))
                               }
-                              disabled={loading}
+                              disabled={activeSessionGenerating}
                               className={cn(
                                 "h-10 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
                                 activeSession.draft.quality === item.value
@@ -1188,7 +1223,7 @@ export default function Home() {
                   className="ml-auto inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300"
                   title="发送"
                 >
-                  {loading ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <SendHorizontal className="size-5" aria-hidden />}
+                  {activeSessionGenerating ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <SendHorizontal className="size-5" aria-hidden />}
                   <span className="sr-only">发送</span>
                 </button>
               </div>
@@ -1625,6 +1660,26 @@ function getImageIdsFromTurn(turn: ChatTurn) {
 
 function getImageIdsFromTurnsFromSession(session: ChatSession) {
   return session.turns.flatMap((turn) => (turn.imageIds?.length ? turn.imageIds : turn.images.map((image) => image.id)));
+}
+
+function hasLoadingTurn(session: ChatSession) {
+  return session.turns.some((turn) => turn.status === "loading");
+}
+
+function hasErrorTurn(session: ChatSession) {
+  return session.turns.some((turn) => turn.status === "error");
+}
+
+function getSessionStatusText(session: ChatSession) {
+  if (hasLoadingTurn(session)) {
+    return "生成中 · 可切换查看其他聊天";
+  }
+
+  if (hasErrorTurn(session)) {
+    return "有生成失败 · 点击查看";
+  }
+
+  return `${session.turns.length} 轮 · ${formatSessionTime(session.updatedAt)}`;
 }
 
 function formatSessionTime(value: string) {

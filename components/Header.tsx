@@ -1,5 +1,5 @@
 ﻿import Link from "next/link";
-import { FilePlus, FileText, History, Settings, Sparkles, Trash2 } from "lucide-react";
+import { ExternalLink, FilePlus, FileText, History, Settings, Sparkles, Trash2 } from "lucide-react";
 
 type HeaderProps = {
   onOpenSettings?: () => void;
@@ -54,6 +54,16 @@ export function Header({ onOpenSettings, onNewChat, onClearChat }: HeaderProps) 
           >
             <History className="size-4" aria-hidden />
             <span className="sr-only">历史记录</span>
+          </a>
+          <a
+            href="https://dahlo.live/"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
+            title="返回中转"
+          >
+            <ExternalLink className="size-4" aria-hidden />
+            <span className="sr-only">返回中转</span>
           </a>
           <button
             type="button"

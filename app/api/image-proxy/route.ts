@@ -1,18 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// 只允许代理来自图片 API 的域名，防止被用作开放代理（SSRF）
-// 生产环境中可通过 IMAGE_PROXY_ALLOWED_HOSTS 环境变量追加允许的 host，逗号分隔
+// Optional exception list for private/internal image hosts. Public CDN/storage
+// image URLs are allowed so generated images can be downloaded normally.
 function getAllowedHosts(): Set<string> {
   const base = new Set<string>();
-
-  const apiUrl = process.env.IMAGE_API_URL;
-  if (apiUrl) {
-    try {
-      base.add(new URL(apiUrl).hostname);
-    } catch {
-      // ignore
-    }
-  }
 
   const extra = process.env.IMAGE_PROXY_ALLOWED_HOSTS;
   if (extra) {
@@ -45,7 +36,7 @@ export async function GET(request: NextRequest) {
 
   // 如果配置了允许的 host 列表，则进行白名单校验
   const allowedHosts = getAllowedHosts();
-  if (allowedHosts.size > 0 && !allowedHosts.has(parsed.hostname)) {
+  if (isPrivateHost(parsed.hostname) && !allowedHosts.has(parsed.hostname)) {
     return NextResponse.json({ success: false, message: "Host not allowed" }, { status: 403 });
   }
 
@@ -87,4 +78,34 @@ function getAttachmentFilename(value: string | null) {
     .trim();
 
   return sanitized || fallback;
+}
+
+function isPrivateHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) {
+    return true;
+  }
+  if (host === "::1" || host === "[::1]" || host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")) {
+    return true;
+  }
+
+  const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!ipv4Match) {
+    return false;
+  }
+
+  const octets = ipv4Match.slice(1).map(Number);
+  const [first, second] = octets;
+  if (octets.some((octet) => octet < 0 || octet > 255)) {
+    return true;
+  }
+
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { Download, Eye, RefreshCw, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { Check, Download, Eye, Loader2, RefreshCw, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { downloadImage, getImageSrc } from "@/lib/utils";
 import type { GeneratedImage } from "@/types/image";
@@ -12,9 +12,59 @@ type ImageCardProps = {
   onReuse: (image: GeneratedImage) => void;
 };
 
+type DownloadStatus = "idle" | "loading" | "success" | "error";
+
+function useDownloadFeedback(onDownload: () => void) {
+  const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>("idle");
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearDownloadTimer = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearDownloadTimer, [clearDownloadTimer]);
+
+  const triggerDownloadWithFeedback = useCallback(() => {
+    if (downloadStatus !== "idle") return;
+
+    clearDownloadTimer();
+    setDownloadStatus("loading");
+
+    try {
+      onDownload();
+      timeoutRef.current = setTimeout(() => {
+        setDownloadStatus("success");
+        timeoutRef.current = setTimeout(() => setDownloadStatus("idle"), 1200);
+      }, 350);
+    } catch {
+      setDownloadStatus("error");
+      timeoutRef.current = setTimeout(() => setDownloadStatus("idle"), 1600);
+    }
+  }, [clearDownloadTimer, downloadStatus, onDownload]);
+
+  return {
+    downloadStatus,
+    downloadDisabled: downloadStatus !== "idle",
+    triggerDownloadWithFeedback,
+  };
+}
+
+function DownloadStatusIcon({ status }: { status: DownloadStatus }) {
+  if (status === "loading") return <Loader2 className="size-4 animate-spin" aria-hidden />;
+  if (status === "success") return <Check className="size-4" aria-hidden />;
+  if (status === "error") return <X className="size-4" aria-hidden />;
+  return <Download className="size-4" aria-hidden />;
+}
+
 export function ImageCard({ image, onDelete, onReuse }: ImageCardProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const src = getImageSrc(image);
+  const { downloadStatus, downloadDisabled, triggerDownloadWithFeedback } = useDownloadFeedback(() =>
+    downloadImage(src, `ai-image-${image.id}.png`),
+  );
   const createdAt = new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
     day: "2-digit",
@@ -51,11 +101,12 @@ export function ImageCard({ image, onDelete, onReuse }: ImageCardProps) {
           <div className="grid grid-cols-4 gap-2">
             <button
               type="button"
-              onClick={() => downloadImage(src, `ai-image-${image.id}.png`)}
-              className="grid size-9 place-items-center rounded-md border border-white/10 text-stone-300 transition hover:border-mint/50 hover:text-mint"
+              onClick={triggerDownloadWithFeedback}
+              disabled={!src || downloadDisabled}
+              className="grid size-9 place-items-center rounded-md border border-white/10 text-stone-300 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-40"
               title="下载"
             >
-              <Download className="size-4" aria-hidden />
+              <DownloadStatusIcon status={downloadStatus} />
               <span className="sr-only">下载</span>
             </button>
             <button

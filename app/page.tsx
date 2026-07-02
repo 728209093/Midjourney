@@ -3,6 +3,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
+  Check,
   ChevronDown,
   Download,
   ImagePlus,
@@ -381,10 +382,13 @@ export default function Home() {
     const turnId = createChatTurnId();
     const createdAt = new Date().toISOString();
     const effectiveMode: ImageMode = currentSession.draft.referenceImageSource ? "edit" : "generate";
+    const referenceImageSource = currentSession.draft.referenceImageSource.trim();
+    const referenceImageUrl =
+      effectiveMode === "edit" && isRemoteHttpUrl(referenceImageSource) ? referenceImageSource : undefined;
     const referenceImageFile =
-      effectiveMode === "edit" ? await buildReferenceFileFromSource(currentSession.draft.referenceImageSource) : null;
+      effectiveMode === "edit" && !referenceImageUrl ? await buildReferenceFileFromSource(referenceImageSource) : null;
 
-    if (effectiveMode === "edit" && !referenceImageFile) {
+    if (effectiveMode === "edit" && !referenceImageFile && !referenceImageUrl) {
       setError("参考图暂时读取失败，请重新选择/上传参考图后再试。");
       return;
     }
@@ -433,6 +437,7 @@ export default function Home() {
                 count: currentSession.draft.count,
                 apiConfig: apiConfigPayload,
                 image: referenceImageFile,
+                referenceImageUrl,
               }),
             })
           : await fetch("/api/generate-image", {
@@ -651,25 +656,18 @@ export default function Home() {
     scrollToComposer();
   }
 
-  async function handleContinueEdit(image: GeneratedImage) {
+  function handleContinueEdit(image: GeneratedImage) {
     const src = getImageSrc(image);
     if (!src) {
       setError("这张图片暂时没有可用的参考图地址，请换一张图片再试。");
       return;
     }
 
-    let referenceImageSource = src;
-    let referenceImageMeta: ChatDraft["referenceImageMeta"] = { name: `reference-${image.id}.png`, type: "image/png" };
-    if (!src.startsWith("data:")) {
-      const file = await buildReferenceFileFromSource(src);
-      if (!file) {
-        setError("这张图片暂时无法作为参考图读取，请下载后重新上传，或换一张图片再试。");
-        return;
-      }
-      referenceImageSource = await readFileAsDataUrl(file);
-      referenceImageMeta = { name: file.name, type: file.type };
-    }
-
+    const referenceImageSource = src;
+    const referenceImageMeta: ChatDraft["referenceImageMeta"] = {
+      name: `reference-${image.id}.${getReferenceExtensionFromSource(src)}`,
+      type: getReferenceMimeTypeFromSource(src),
+    };
     updateActiveSession((session) => ({
       ...session,
       draft: {
@@ -1306,6 +1304,64 @@ export default function Home() {
   );
 }
 
+type DownloadStatus = "idle" | "loading" | "success" | "error";
+
+function useDownloadFeedback(onDownload: () => void) {
+  const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>("idle");
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearDownloadTimer = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearDownloadTimer, [clearDownloadTimer]);
+
+  const triggerDownloadWithFeedback = useCallback(() => {
+    if (downloadStatus !== "idle") {
+      return;
+    }
+
+    clearDownloadTimer();
+    setDownloadStatus("loading");
+
+    try {
+      onDownload();
+      timeoutRef.current = setTimeout(() => {
+        setDownloadStatus("success");
+        timeoutRef.current = setTimeout(() => setDownloadStatus("idle"), 1200);
+      }, 350);
+    } catch {
+      setDownloadStatus("error");
+      timeoutRef.current = setTimeout(() => setDownloadStatus("idle"), 1600);
+    }
+  }, [clearDownloadTimer, downloadStatus, onDownload]);
+
+  return {
+    downloadStatus,
+    downloadDisabled: downloadStatus !== "idle",
+    triggerDownloadWithFeedback,
+  };
+}
+
+function DownloadStatusIcon({ status, className }: { status: DownloadStatus; className: string }) {
+  if (status === "loading") {
+    return <Loader2 className={cn(className, "animate-spin")} aria-hidden />;
+  }
+
+  if (status === "success") {
+    return <Check className={className} aria-hidden />;
+  }
+
+  if (status === "error") {
+    return <X className={className} aria-hidden />;
+  }
+
+  return <Download className={className} aria-hidden />;
+}
+
 function ImagePreviewDialog({
   image,
   onClose,
@@ -1316,6 +1372,12 @@ function ImagePreviewDialog({
   onDownload: (image: GeneratedImage) => void;
 }) {
   const [zoom, setZoom] = useState(1);
+  const src = image ? getImageSrc(image) : "";
+  const { downloadStatus, downloadDisabled, triggerDownloadWithFeedback } = useDownloadFeedback(() => {
+    if (image) {
+      onDownload(image);
+    }
+  });
 
   useEffect(() => {
     if (!image) return;
@@ -1341,7 +1403,6 @@ function ImagePreviewDialog({
     return null;
   }
 
-  const src = getImageSrc(image);
   const canZoomOut = zoom > 0.5;
   const canZoomIn = zoom < 3;
 
@@ -1389,12 +1450,12 @@ function ImagePreviewDialog({
           </button>
           <button
             type="button"
-            onClick={() => onDownload(image)}
-            disabled={!src}
+            onClick={triggerDownloadWithFeedback}
+            disabled={!src || downloadDisabled}
             className="grid size-10 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-40"
             title="保存图片"
           >
-            <Download className="size-4" aria-hidden />
+            <DownloadStatusIcon status={downloadStatus} className="size-4" />
             <span className="sr-only">保存图片</span>
           </button>
           <button
@@ -1461,6 +1522,7 @@ function GeneratedImageCard({
   const thumbnailAspectRatio = imageSize ? `${imageSize.width} / ${imageSize.height}` : "1 / 1";
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const { downloadStatus, downloadDisabled, triggerDownloadWithFeedback } = useDownloadFeedback(() => onDownload(image));
 
   return (
     <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
@@ -1506,12 +1568,12 @@ function GeneratedImageCard({
           </button>
           <button
             type="button"
-            onClick={() => onDownload(image)}
-            disabled={!src}
+            onClick={triggerDownloadWithFeedback}
+            disabled={!src || downloadDisabled}
             className="inline-flex items-center justify-center gap-1 rounded-md border border-white/10 px-2 py-1.5 text-xs text-stone-300 transition hover:border-mint/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
             title="下载图片"
           >
-            <Download className="size-3.5" aria-hidden />
+            <DownloadStatusIcon status={downloadStatus} className="size-3.5" />
           </button>
         </div>
       </div>
@@ -1830,8 +1892,32 @@ async function buildReferenceFileFromSource(src: string) {
   return new File([blob], getReferenceFileName(blob.type), { type: blob.type || "image/png" });
 }
 
+function isRemoteHttpUrl(src: string) {
+  return /^https?:\/\//i.test(src.trim());
+}
+
+function getReferenceMimeTypeFromSource(src: string) {
+  const normalizedSrc = src.trim().toLowerCase();
+  const dataMime = /^data:([^;,]+)/i.exec(normalizedSrc)?.[1];
+  if (dataMime?.startsWith("image/")) {
+    return dataMime;
+  }
+  if (/\.(jpe?g)(?:[?#]|$)/i.test(normalizedSrc)) return "image/jpeg";
+  if (/\.webp(?:[?#]|$)/i.test(normalizedSrc)) return "image/webp";
+  if (/\.gif(?:[?#]|$)/i.test(normalizedSrc)) return "image/gif";
+  return "image/png";
+}
+
+function getReferenceExtensionFromSource(src: string) {
+  const type = getReferenceMimeTypeFromSource(src);
+  if (type === "image/jpeg") return "jpg";
+  if (type === "image/webp") return "webp";
+  if (type === "image/gif") return "gif";
+  return "png";
+}
+
 async function fetchImageBlob(src: string) {
-  const candidates = /^https?:\/\//i.test(src)
+  const candidates = isRemoteHttpUrl(src)
     ? [src, `/api/image-proxy?url=${encodeURIComponent(src)}`]
     : [src];
 

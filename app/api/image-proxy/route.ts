@@ -27,6 +27,7 @@ function getAllowedHosts(): Set<string> {
 
 export async function GET(request: NextRequest) {
   const target = request.nextUrl.searchParams.get("url");
+  const filename = getAttachmentFilename(request.nextUrl.searchParams.get("filename"));
   if (!target) {
     return NextResponse.json({ success: false, message: "Missing url" }, { status: 400 });
   }
@@ -70,7 +71,20 @@ export async function GET(request: NextRequest) {
   return new NextResponse(buffer, {
     headers: {
       "Content-Type": contentType,
+      "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
       "Cache-Control": "no-store",
     },
   });
+}
+
+function getAttachmentFilename(value: string | null) {
+  const fallback = "image.png";
+  if (!value) return fallback;
+
+  const sanitized = value
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .replace(/[\r\n]/g, "")
+    .trim();
+
+  return sanitized || fallback;
 }

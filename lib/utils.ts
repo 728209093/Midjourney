@@ -50,20 +50,18 @@ export async function copyTextToClipboard(text: string) {
   }
 }
 
-export async function downloadImage(src: string, filename: string) {
-  try {
-    const response = await fetchDownloadSource(src);
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
+export function downloadImage(src: string, filename: string) {
+  if (!src) {
+    throw new Error("Missing image source");
+  }
 
-    try {
-      triggerDownload(objectUrl, filename);
-    } finally {
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    }
+  if (/^https?:\/\//.test(src)) {
+    const params = new URLSearchParams({
+      url: src,
+      filename,
+    });
+    triggerDownload(`/api/image-proxy?${params.toString()}`, filename);
     return;
-  } catch {
-    // Fall back to the standard download link below.
   }
 
   triggerDownload(src, filename);
@@ -80,22 +78,3 @@ function triggerDownload(href: string, filename: string) {
   link.remove();
 }
 
-async function fetchDownloadSource(src: string) {
-  try {
-    const response = await fetch(src);
-    if (response.ok) {
-      return response;
-    }
-  } catch {
-    // Try the same-origin image proxy for remote images below.
-  }
-
-  if (/^https?:\/\//.test(src)) {
-    const response = await fetch(`/api/image-proxy?url=${encodeURIComponent(src)}`);
-    if (response.ok) {
-      return response;
-    }
-  }
-
-  throw new Error("Image download failed");
-}

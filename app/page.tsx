@@ -5,6 +5,8 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ImagePlus,
   Loader2,
@@ -152,6 +154,7 @@ export default function Home() {
   const [settingsMessage, setSettingsMessage] = useState<SettingsMessage | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<GeneratedImage | null>(null);
+  const [previewReferenceImageId, setPreviewReferenceImageId] = useState<string | null>(null);
   const [clientReady, setClientReady] = useState(false);
   const [colorTheme, setColorTheme] = useState<ColorTheme>("night");
   const [themeLoaded, setThemeLoaded] = useState(false);
@@ -164,6 +167,7 @@ export default function Home() {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [referenceDragging, setReferenceDragging] = useState(false);
+  const [referenceImagesCollapsed, setReferenceImagesCollapsed] = useState(false);
   const [pendingDeleteTurnId, setPendingDeleteTurnId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -202,6 +206,22 @@ export default function Home() {
   );
   const referenceImages = activeSession.draft.referenceImages;
   const hasReferenceImages = referenceImages.length > 0;
+  const previewReferenceIndex = previewReferenceImageId
+    ? referenceImages.findIndex((reference) => reference.id === previewReferenceImageId)
+    : -1;
+
+  useEffect(() => {
+    if (!hasReferenceImages) {
+      setReferenceImagesCollapsed(false);
+      setPreviewReferenceImageId(null);
+    }
+  }, [hasReferenceImages]);
+
+  useEffect(() => {
+    if (previewReferenceImageId && previewReferenceIndex === -1) {
+      setPreviewReferenceImageId(null);
+    }
+  }, [previewReferenceImageId, previewReferenceIndex]);
 
   useEffect(() => {
     setClientReady(true);
@@ -1177,38 +1197,60 @@ export default function Home() {
 
               {hasReferenceImages ? (
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-2">
-                  <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                  <div className={cn("flex items-center justify-between gap-2 px-1", referenceImagesCollapsed ? "mb-0" : "mb-2")}>
                     <p className="text-xs font-medium text-white">
                       参考图 {referenceImages.length}/{MAX_REFERENCE_IMAGES}
                     </p>
-                    <p className="text-xs text-stone-400">
-                      {referenceImages.length < MAX_REFERENCE_IMAGES ? `还可添加 ${MAX_REFERENCE_IMAGES - referenceImages.length} 张` : "已达上限"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {referenceImages.map((reference, index) => (
-                      <div
-                        key={reference.id}
-                        className="group relative size-16 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-ink sm:size-20"
-                        title={reference.meta?.name || `参考图 ${index + 1}`}
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-stone-400">
+                        {referenceImages.length < MAX_REFERENCE_IMAGES ? `还可添加 ${MAX_REFERENCE_IMAGES - referenceImages.length} 张` : "已达上限"}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setReferenceImagesCollapsed((current) => !current)}
+                        className="grid size-7 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-300 transition hover:border-mint/50 hover:text-mint"
+                        title={referenceImagesCollapsed ? "展开参考图" : "折叠参考图"}
+                        aria-expanded={!referenceImagesCollapsed}
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={reference.source} alt={`参考图 ${index + 1}`} className="h-full w-full object-cover" />
-                        <span className="absolute left-1 top-1 grid size-5 place-items-center rounded bg-black/60 text-[11px] font-medium text-white">
-                          {index + 1}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => removeReferenceImage(reference.id)}
-                          className="absolute right-1 top-1 grid size-6 place-items-center rounded bg-black/60 text-white opacity-90 transition hover:bg-coral hover:text-ink sm:opacity-0 sm:group-hover:opacity-100"
-                          title="移除参考图"
-                        >
-                          <X className="size-3.5" aria-hidden />
-                          <span className="sr-only">移除参考图</span>
-                        </button>
-                      </div>
-                    ))}
+                        <ChevronDown className={cn("size-4 transition", referenceImagesCollapsed ? "" : "rotate-180")} aria-hidden />
+                        <span className="sr-only">{referenceImagesCollapsed ? "展开参考图" : "折叠参考图"}</span>
+                      </button>
+                    </div>
                   </div>
+                  {referenceImagesCollapsed ? null : (
+                    <div className="flex flex-wrap gap-2">
+                      {referenceImages.map((reference, index) => (
+                        <div
+                          key={reference.id}
+                          className="group relative size-16 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-ink sm:size-20"
+                          title={reference.meta?.name || `参考图 ${index + 1}`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setPreviewReferenceImageId(reference.id)}
+                            className="block h-full w-full"
+                            title="查看大图"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={reference.source} alt={`参考图 ${index + 1}`} className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.04]" />
+                            <span className="sr-only">查看参考图 {index + 1}</span>
+                          </button>
+                          <span className="absolute left-1 top-1 grid size-5 place-items-center rounded bg-black/60 text-[11px] font-medium text-white">
+                            {index + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeReferenceImage(reference.id)}
+                            className="absolute right-1 top-1 grid size-6 place-items-center rounded bg-black/60 text-white opacity-90 transition hover:bg-coral hover:text-ink sm:opacity-0 sm:group-hover:opacity-100"
+                            title="移除参考图"
+                          >
+                            <X className="size-3.5" aria-hidden />
+                            <span className="sr-only">移除参考图</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : null}
 
@@ -1496,6 +1538,12 @@ export default function Home() {
       ) : null}
 
       <ImagePreviewDialog image={previewImage} onClose={() => setPreviewImage(null)} onDownload={handleDownload} />
+      <ReferenceImagePreviewDialog
+        images={referenceImages}
+        currentId={previewReferenceImageId}
+        onChange={setPreviewReferenceImageId}
+        onClose={() => setPreviewReferenceImageId(null)}
+      />
     </main>
   );
 }
@@ -1674,6 +1722,130 @@ function ImagePreviewDialog({
             alt={image.prompt}
             className="max-h-[calc(100vh-7rem)] max-w-full rounded-md object-contain shadow-soft transition-transform duration-150"
             style={{ transform: `scale(${zoom})` }}
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReferenceImagePreviewDialog({
+  images,
+  currentId,
+  onChange,
+  onClose,
+}: {
+  images: ReferenceImageDraft[];
+  currentId: string | null;
+  onChange: (id: string) => void;
+  onClose: () => void;
+}) {
+  const currentIndex = currentId ? images.findIndex((image) => image.id === currentId) : -1;
+  const currentImage = currentIndex >= 0 ? images[currentIndex] : null;
+  const hasMultipleImages = images.length > 1;
+
+  const showPrevious = useCallback(() => {
+    if (!hasMultipleImages || currentIndex < 0) return;
+    const previousIndex = (currentIndex - 1 + images.length) % images.length;
+    onChange(images[previousIndex].id);
+  }, [currentIndex, hasMultipleImages, images, onChange]);
+
+  const showNext = useCallback(() => {
+    if (!hasMultipleImages || currentIndex < 0) return;
+    const nextIndex = (currentIndex + 1) % images.length;
+    onChange(images[nextIndex].id);
+  }, [currentIndex, hasMultipleImages, images, onChange]);
+
+  useEffect(() => {
+    if (!currentImage) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        showPrevious();
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        showNext();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [currentImage, onClose, showNext, showPrevious]);
+
+  if (!currentImage) {
+    return null;
+  }
+
+  const title = currentImage.meta?.name || `参考图 ${currentIndex + 1}`;
+
+  return (
+    <div
+      className="fixed inset-0 z-[65] flex flex-col bg-black/[0.92] backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="参考图预览"
+      onClick={onClose}
+    >
+      <div
+        className="flex items-center justify-between gap-3 border-b border-white/10 bg-ink/[0.85] px-3 py-3 sm:px-4"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <p className="min-w-0 flex-1 truncate text-sm text-stone-300">
+          {title} <span className="text-stone-500">{currentIndex + 1}/{images.length}</span>
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="grid size-10 shrink-0 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-coral/60 hover:text-coral"
+          title="关闭"
+        >
+          <X className="size-4" aria-hidden />
+          <span className="sr-only">关闭</span>
+        </button>
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-hidden p-3 sm:p-6">
+        {hasMultipleImages ? (
+          <>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                showPrevious();
+              }}
+              className="absolute left-3 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-black/55 text-white transition hover:border-mint/50 hover:text-mint sm:left-5"
+              title="上一张"
+            >
+              <ChevronLeft className="size-5" aria-hidden />
+              <span className="sr-only">上一张</span>
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                showNext();
+              }}
+              className="absolute right-3 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-black/55 text-white transition hover:border-mint/50 hover:text-mint sm:right-5"
+              title="下一张"
+            >
+              <ChevronRight className="size-5" aria-hidden />
+              <span className="sr-only">下一张</span>
+            </button>
+          </>
+        ) : null}
+
+        <div className="grid h-full place-items-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={currentImage.source}
+            alt={title}
+            className="max-h-[calc(100vh-7rem)] max-w-full rounded-md object-contain shadow-soft"
             onClick={(event) => event.stopPropagation()}
           />
         </div>

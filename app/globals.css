@@ -47,6 +47,126 @@ a:focus-visible {
   background: rgba(94, 234, 212, 0.32);
 }
 
+:root.theme-day {
+  color-scheme: light;
+  background: #eef3f2;
+}
+
+:root.theme-day body {
+  background:
+    radial-gradient(circle at 18% 12%, rgba(20, 184, 166, 0.14), transparent 28rem),
+    radial-gradient(circle at 84% 8%, rgba(251, 113, 133, 0.1), transparent 25rem),
+    linear-gradient(135deg, #f7faf9 0%, #eef3f2 46%, #f9fbfb 100%);
+  color: #17201f;
+}
+
+:root.theme-day [class~="bg-panel"],
+:root.theme-day [class~="bg-panel/55"],
+:root.theme-day [class~="bg-panel/68"],
+:root.theme-day [class~="bg-panel/78"],
+:root.theme-day [class~="bg-panel/86"],
+:root.theme-day [class~="bg-panel/92"],
+:root.theme-day [class~="bg-panel/94"],
+:root.theme-day [class~="bg-ink"],
+:root.theme-day [class~="bg-ink/54"],
+:root.theme-day [class~="bg-ink/70"],
+:root.theme-day [class~="bg-ink/80"],
+:root.theme-day [class~="bg-ink/88"],
+:root.theme-day [class~="bg-ink/90"],
+:root.theme-day [class~="bg-ink/92"],
+:root.theme-day [class~="bg-ink/95"],
+:root.theme-day [class~="bg-ink/[0.85]"] {
+  background-color: rgba(255, 255, 255, 0.86);
+}
+
+:root.theme-day [class~="bg-ink/[0.45]"],
+:root.theme-day [class~="bg-white/[0.03]"],
+:root.theme-day [class~="bg-white/[0.04]"],
+:root.theme-day [class~="bg-white/[0.05]"],
+:root.theme-day [class~="bg-white/[0.06]"],
+:root.theme-day [class~="bg-white/[0.1]"],
+:root.theme-day [class~="bg-white/10"],
+:root.theme-day [class~="bg-white/15"] {
+  background-color: rgba(18, 30, 28, 0.055);
+}
+
+:root.theme-day [class~="border-white/10"],
+:root.theme-day [class~="border-white/15"] {
+  border-color: rgba(25, 45, 42, 0.13);
+}
+
+:root.theme-day [class~="text-white"] {
+  color: #17201f;
+}
+
+:root.theme-day [class~="text-stone-200"] {
+  color: #2e3b39;
+}
+
+:root.theme-day [class~="text-stone-300"] {
+  color: #40504d;
+}
+
+:root.theme-day [class~="text-stone-400"] {
+  color: #64716e;
+}
+
+:root.theme-day [class~="text-stone-500"] {
+  color: #7a8784;
+}
+
+:root.theme-day [class~="text-rose-100"],
+:root.theme-day [class~="text-rose-200"] {
+  color: #9f1239;
+}
+
+:root.theme-day [class~="shadow-soft"] {
+  box-shadow: 0 18px 54px rgba(18, 30, 28, 0.12);
+}
+
+:root.theme-day .chat-bubble-user {
+  background-color: #b6f0e4;
+  border-color: rgba(15, 118, 110, 0.45);
+  box-shadow: 0 12px 30px rgba(15, 118, 110, 0.18);
+}
+
+:root.theme-day .chat-bubble-user button {
+  color: rgba(17, 49, 46, 0.72);
+}
+
+:root.theme-day .chat-bubble-user button:hover {
+  color: #0f2926;
+}
+
+:root.theme-day .chat-bubble-assistant {
+  background-color: rgba(255, 255, 255, 0.96);
+  border-color: rgba(38, 65, 60, 0.2);
+  box-shadow: 0 12px 32px rgba(18, 30, 28, 0.11);
+}
+
+:root.theme-day .generated-image-card {
+  background-color: #ffffff;
+  border-color: rgba(15, 118, 110, 0.2);
+  box-shadow: 0 10px 26px rgba(18, 30, 28, 0.1);
+}
+
+:root.theme-day .generated-image-card > div {
+  border-color: rgba(15, 118, 110, 0.16);
+}
+
+:root.theme-day .continue-edit-button {
+  background-color: #0f766e;
+  border-color: #0f766e;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 118, 110, 0.24);
+}
+
+:root.theme-day .continue-edit-button:hover {
+  background-color: #0b5f59;
+  border-color: #0b5f59;
+  color: #ffffff;
+}
+
 @keyframes image-loading-shine {
   0% {
     transform: translateX(-120%);

@@ -8,6 +8,8 @@ import type {
   ImageMode,
 } from "@/types/image";
 
+const MAX_REFERENCE_IMAGES = 8;
+
 type ProviderImage = {
   url?: string;
   b64_json?: string;
@@ -126,7 +128,9 @@ export async function editImages(
     throw new Error("服务端图片 API 尚未配置，请检查 IMAGE_API_URL 和 IMAGE_API_KEY。");
   }
 
-  if (!params.image && !params.referenceImageUrl) {
+  const uploadedImages = [...(params.images || []), ...(params.image ? [params.image] : [])].slice(0, MAX_REFERENCE_IMAGES);
+
+  if (uploadedImages.length === 0 && !params.referenceImageUrl) {
     throw new Error("缺少参考图。");
   }
 
@@ -143,8 +147,10 @@ export async function editImages(
       formData.append("quality", params.quality);
       formData.append("n", String(params.n));
 
-      if (params.image) {
-        formData.append("image", params.image, params.image.name || "reference.png");
+      if (uploadedImages.length > 0) {
+        uploadedImages.forEach((image) => {
+          formData.append("image", image, image.name || "reference.png");
+        });
       } else if (params.referenceImageUrl) {
         formData.append("referenceImageUrl", params.referenceImageUrl);
       }

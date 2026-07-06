@@ -1,13 +1,17 @@
 ﻿import Link from "next/link";
-import { ExternalLink, FilePlus, FileText, History, Settings, Sparkles, Trash2 } from "lucide-react";
+import { ExternalLink, FilePlus, FileText, History, Moon, Settings, Sparkles, Sun, Trash2 } from "lucide-react";
 
 type HeaderProps = {
   onOpenSettings?: () => void;
   onNewChat?: () => void;
   onClearChat?: () => void;
+  colorTheme?: "day" | "night";
+  onToggleTheme?: () => void;
 };
 
-export function Header({ onOpenSettings, onNewChat, onClearChat }: HeaderProps) {
+export function Header({ onOpenSettings, onNewChat, onClearChat, colorTheme = "night", onToggleTheme }: HeaderProps) {
+  const dayMode = colorTheme === "day";
+
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-ink/92 shadow-soft backdrop-blur-xl">
       <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
@@ -65,6 +69,16 @@ export function Header({ onOpenSettings, onNewChat, onClearChat }: HeaderProps) 
             <ExternalLink className="size-4" aria-hidden />
             <span className="sr-only">返回中转</span>
           </a>
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
+            title={dayMode ? "切换到夜间模式" : "切换到日间模式"}
+            aria-pressed={dayMode}
+          >
+            {dayMode ? <Moon className="size-4" aria-hidden /> : <Sun className="size-4" aria-hidden />}
+            <span className="sr-only">{dayMode ? "切换到夜间模式" : "切换到日间模式"}</span>
+          </button>
           <button
             type="button"
             onClick={onOpenSettings}

@@ -26,6 +26,7 @@ export type ImageGenerateParams = {
 
 export type ImageEditParams = ImageGenerateParams & {
   image?: File;
+  images?: File[];
   referenceImageUrl?: string;
 };
 

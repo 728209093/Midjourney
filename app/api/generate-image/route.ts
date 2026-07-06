@@ -5,6 +5,7 @@ import { validateGenerateRequest, validateImageFile } from "@/lib/validators";
 
 const WINDOW_MS = 60 * 1000;
 const MAX_REQUESTS = 5;
+const MAX_REFERENCE_IMAGES = 8;
 const buckets = new Map<string, { count: number; resetAt: number }>();
 
 function createRequestId() {
@@ -125,6 +126,29 @@ async function handleImageEdit(request: NextRequest, requestId: string) {
       return json({ success: false, message: parsed.message }, 400, requestId);
     }
 
+    const imageInputs = formData.getAll("image");
+    if (imageInputs.length > MAX_REFERENCE_IMAGES) {
+      return json({ success: false, message: `最多支持 ${MAX_REFERENCE_IMAGES} 张参考图。` }, 400, requestId);
+    }
+
+    if (imageInputs.length > 0) {
+      const imageResults = imageInputs.map(validateImageFile);
+      const invalidImage = imageResults.find((image) => !image.ok);
+      if (invalidImage && !invalidImage.ok) {
+        return json({ success: false, message: invalidImage.message }, 400, requestId);
+      }
+
+      const uploadedImages = imageResults.map((image) => (image.ok ? image.file : null)).filter((image): image is File => Boolean(image));
+      const images = await editImages({ ...parsed.data, images: uploadedImages }, parsed.apiConfig);
+      console.info(`[generate-image:${requestId}] success`, {
+        mode: "edit",
+        imageCount: images.length,
+        referenceImageCount: uploadedImages.length,
+        via: "uploaded-file",
+      });
+      return json({ success: true, images }, 200, requestId);
+    }
+
     if (parsed.referenceImageUrl) {
       const images = await editImages(
         { ...parsed.data, referenceImageUrl: parsed.referenceImageUrl },
@@ -138,18 +162,7 @@ async function handleImageEdit(request: NextRequest, requestId: string) {
       return json({ success: true, images }, 200, requestId);
     }
 
-    const image = validateImageFile(formData.get("image"));
-    if (!image.ok) {
-      return json({ success: false, message: image.message }, 400, requestId);
-    }
-
-    const images = await editImages({ ...parsed.data, image: image.file }, parsed.apiConfig);
-    console.info(`[generate-image:${requestId}] success`, {
-      mode: "edit",
-      imageCount: images.length,
-      via: "uploaded-file",
-    });
-    return json({ success: true, images }, 200, requestId);
+    return json({ success: false, message: "请上传参考图。" }, 400, requestId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "图生图失败，请稍后重试。";
     console.error(`[generate-image:${requestId}] edit failed`, {

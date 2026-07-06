@@ -26,7 +26,6 @@ import { Header } from "@/components/Header";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { validateApiBaseUrl } from "@/lib/api-url";
 import { deleteImagesFromHistory, getImagesFromHistory, saveImagesToHistory } from "@/lib/image-history-db";
-import { parseImageSize } from "@/lib/image-size";
 import { cn, copyTextToClipboard, downloadImage, getImageSrc } from "@/lib/utils";
 import type {
   GenerateImageResponse,
@@ -41,8 +40,10 @@ import type {
 const HISTORY_KEY = "ai-image-studio-history";
 const CHAT_STORE_KEY = "ai-image-studio-chat-store";
 const API_CONFIG_KEY = "ai-image-studio-api-config";
+const THEME_KEY = "ai-image-studio-theme";
 const MAX_HISTORY_ITEMS = 20;
 const MAX_SESSION_ITEMS = 20;
+const MAX_REFERENCE_IMAGES = 8;
 const HYDRATION_SESSION_ID = "chat_hydration";
 const HYDRATION_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const DEFAULT_API_CONFIG: ImageApiConfig = {
@@ -76,8 +77,15 @@ type ChatDraft = {
   resolution: ImageResolution;
   quality: ImageQuality;
   count: number;
-  referenceImageSource: string;
-  referenceImageMeta: { name?: string; type?: string } | null;
+  referenceImages: ReferenceImageDraft[];
+  referenceImageSource?: string;
+  referenceImageMeta?: { name?: string; type?: string } | null;
+};
+
+type ReferenceImageDraft = {
+  id: string;
+  source: string;
+  meta: { name?: string; type?: string } | null;
 };
 
 type ChatTurn = {
@@ -125,14 +133,15 @@ type SettingsMessage = {
   tone: "success" | "error" | "info";
 };
 
+type ColorTheme = "day" | "night";
+
 const DEFAULT_DRAFT: ChatDraft = {
   prompt: "",
   size: "1024x1024",
   resolution: "1k",
   quality: "medium",
   count: 1,
-  referenceImageSource: "",
-  referenceImageMeta: null,
+  referenceImages: [],
 };
 
 export default function Home() {
@@ -144,6 +153,8 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<GeneratedImage | null>(null);
   const [clientReady, setClientReady] = useState(false);
+  const [colorTheme, setColorTheme] = useState<ColorTheme>("night");
+  const [themeLoaded, setThemeLoaded] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
@@ -188,11 +199,46 @@ export default function Home() {
     () => ASPECT_OPTIONS.find((option) => option.size === activeSession.draft.size) || ASPECT_OPTIONS[0],
     [activeSession.draft.size],
   );
-  const referencePreviewUrl = activeSession.draft.referenceImageSource;
+  const referenceImages = activeSession.draft.referenceImages;
+  const hasReferenceImages = referenceImages.length > 0;
 
   useEffect(() => {
     setClientReady(true);
   }, []);
+
+  useEffect(() => {
+    let storedTheme: string | null = null;
+    try {
+      storedTheme = window.localStorage.getItem(THEME_KEY);
+    } catch {
+      storedTheme = null;
+    }
+
+    if (isColorTheme(storedTheme)) {
+      setColorTheme(storedTheme);
+    } else if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: light)").matches) {
+      setColorTheme("day");
+    }
+
+    setThemeLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const dayMode = colorTheme === "day";
+
+    root.classList.toggle("theme-day", dayMode);
+    root.classList.toggle("theme-night", !dayMode);
+    root.style.colorScheme = dayMode ? "light" : "dark";
+
+    if (themeLoaded) {
+      try {
+        window.localStorage.setItem(THEME_KEY, colorTheme);
+      } catch {
+        // Theme persistence is optional; keep the in-memory selection.
+      }
+    }
+  }, [colorTheme, themeLoaded]);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -370,6 +416,10 @@ export default function Home() {
     downloadImage(src, `ai-image-${image.id}.${ext}`);
   }, []);
 
+  const handleToggleTheme = useCallback(() => {
+    setColorTheme((current) => (current === "day" ? "night" : "day"));
+  }, []);
+
   const updateActiveSession = useCallback(
     (updater: (session: ChatSession) => ChatSession) => {
       setSessions((current) => current.map((session) => (session.id === activeSessionId ? updater(session) : session)));
@@ -399,17 +449,18 @@ export default function Home() {
     const generationSessionId = currentSession.id;
     const turnId = createChatTurnId();
     const createdAt = new Date().toISOString();
-    const effectiveMode: ImageMode = currentSession.draft.referenceImageSource ? "edit" : "generate";
-    const referenceImageSource = currentSession.draft.referenceImageSource.trim();
-    const referenceImageUrl =
-      effectiveMode === "edit" && isRemoteHttpUrl(referenceImageSource) ? referenceImageSource : undefined;
-    const referenceImageFile =
-      effectiveMode === "edit" && !referenceImageUrl ? await buildReferenceFileFromSource(referenceImageSource) : null;
+    const effectiveMode: ImageMode = currentSession.draft.referenceImages.length > 0 ? "edit" : "generate";
+    const referenceImageFiles =
+      effectiveMode === "edit"
+        ? await Promise.all(currentSession.draft.referenceImages.map((reference) => buildReferenceFileFromSource(reference.source)))
+        : [];
 
-    if (effectiveMode === "edit" && !referenceImageFile && !referenceImageUrl) {
+    if (effectiveMode === "edit" && referenceImageFiles.some((file) => !file)) {
       setError("参考图暂时读取失败，请重新选择/上传参考图后再试。");
       return;
     }
+
+    const uploadedReferenceFiles = referenceImageFiles.filter((file): file is File => Boolean(file));
 
     setError("");
     setUploadMenuOpen(false);
@@ -454,8 +505,7 @@ export default function Home() {
                 quality: currentSession.draft.quality,
                 count: currentSession.draft.count,
                 apiConfig: apiConfigPayload,
-                image: referenceImageFile,
-                referenceImageUrl,
+                images: uploadedReferenceFiles,
               }),
             })
           : await fetch("/api/generate-image", {
@@ -681,10 +731,13 @@ export default function Home() {
       return;
     }
 
-    const referenceImageSource = src;
-    const referenceImageMeta: ChatDraft["referenceImageMeta"] = {
-      name: `reference-${image.id}.${getReferenceExtensionFromSource(src)}`,
-      type: getReferenceMimeTypeFromSource(src),
+    const referenceImage: ReferenceImageDraft = {
+      id: createReferenceImageId(),
+      source: src,
+      meta: {
+        name: `reference-${image.id}.${getReferenceExtensionFromSource(src)}`,
+        type: getReferenceMimeTypeFromSource(src),
+      },
     };
     updateActiveSession((session) => ({
       ...session,
@@ -694,8 +747,7 @@ export default function Home() {
         size: image.size || "1024x1024",
         resolution: image.resolution || "1k",
         quality: image.quality,
-        referenceImageSource,
-        referenceImageMeta,
+        referenceImages: [referenceImage],
       },
       updatedAt: new Date().toISOString(),
     }));
@@ -737,12 +789,56 @@ export default function Home() {
     }));
   }
 
+  function handleReferenceImageFileList(files: File[] | FileList | null) {
+    const selectedFiles = Array.from(files || []);
+    if (selectedFiles.length === 0) {
+      return;
+    }
+
+    const availableSlots = MAX_REFERENCE_IMAGES - activeSession.draft.referenceImages.length;
+    if (availableSlots <= 0) {
+      setError(`最多支持 ${MAX_REFERENCE_IMAGES} 张参考图，请先删除一张后再上传。`);
+      return;
+    }
+
+    const filesToAdd = selectedFiles.slice(0, availableSlots);
+    const invalidFile = filesToAdd.find((file) => !isImageFile(file));
+    if (invalidFile) {
+      setError("请选择图片文件。");
+      return;
+    }
+
+    void (async () => {
+      const nextReferenceImages = await Promise.all(
+        filesToAdd.map(async (file) => ({
+          id: createReferenceImageId(),
+          source: await readFileAsDataUrl(file),
+          meta: { name: file.name, type: file.type },
+        })),
+      );
+
+      setActiveSessionDraft((draft) => ({
+        ...draft,
+        referenceImages: [...draft.referenceImages, ...nextReferenceImages].slice(0, MAX_REFERENCE_IMAGES),
+      }));
+      setError(selectedFiles.length > availableSlots ? `最多支持 ${MAX_REFERENCE_IMAGES} 张参考图，已补满上限。` : "");
+    })().catch(() => {
+      setError("参考图读取失败，请重试。");
+    });
+  }
+
+  function removeReferenceImage(id: string) {
+    setActiveSessionDraft((draft) => ({
+      ...draft,
+      referenceImages: draft.referenceImages.filter((image) => image.id !== id),
+    }));
+  }
+
   function handleReferenceImageFiles(file: File | null) {
     if (!file) {
       setActiveSessionDraft((draft) => ({
         ...draft,
-        referenceImageSource: "",
-        referenceImageMeta: null,
+        referenceImages: [],
       }));
       return;
     }
@@ -756,8 +852,13 @@ export default function Home() {
       const dataUrl = await readFileAsDataUrl(file);
       setActiveSessionDraft((draft) => ({
         ...draft,
-        referenceImageSource: dataUrl,
-        referenceImageMeta: { name: file.name, type: file.type },
+        referenceImages: [
+          {
+            id: createReferenceImageId(),
+            source: dataUrl,
+            meta: { name: file.name, type: file.type },
+          },
+        ],
       }));
       setError("");
     })().catch(() => {
@@ -769,25 +870,31 @@ export default function Home() {
     event.preventDefault();
     setReferenceDragging(false);
     if (activeSessionGenerating) return;
-    const file = getFirstImageFileFromDataTransfer(event.dataTransfer);
-    handleReferenceImageFiles(file);
+    const files = getImageFilesFromDataTransfer(event.dataTransfer);
+    handleReferenceImageFileList(files);
   }
 
-  function handlePasteReference(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+  function handlePasteReference(event: React.ClipboardEvent<HTMLElement>) {
     if (activeSessionGenerating) return;
 
-    const file = getFirstImageFileFromDataTransfer(event.clipboardData);
-    if (!file) {
+    const files = getImageFilesFromDataTransfer(event.clipboardData);
+    if (files.length === 0) {
       return;
     }
 
     event.preventDefault();
-    handleReferenceImageFiles(file);
+    handleReferenceImageFileList(files);
   }
 
   return (
     <main className="flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto lg:h-screen lg:overflow-hidden">
-      <Header onOpenSettings={() => setSettingsOpen(true)} onNewChat={handleNewChat} onClearChat={handleClearChat} />
+      <Header
+        colorTheme={colorTheme}
+        onToggleTheme={handleToggleTheme}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onNewChat={handleNewChat}
+        onClearChat={handleClearChat}
+      />
 
       <SettingsDialog
         open={settingsOpen}
@@ -923,7 +1030,7 @@ export default function Home() {
               <article key={turn.id} className="space-y-3">
                 <div className="flex flex-row-reverse items-start gap-3">
                   <Avatar icon={<User className="size-4" aria-hidden />} />
-                  <div className="max-w-[min(60rem,92vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
+                  <div className="chat-bubble-user max-w-[min(60rem,92vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
                     <p className="select-text whitespace-pre-wrap text-sm leading-6 selection:bg-ink selection:text-white">{turn.prompt}</p>
                     <div className="mt-2 flex items-center justify-end gap-2">
                       <button
@@ -941,29 +1048,24 @@ export default function Home() {
                   <Avatar icon={<Bot className="size-4" aria-hidden />} />
                   <div
                     className={cn(
-                      "min-w-0 max-w-full rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
+                      "chat-bubble-assistant min-w-0 max-w-full rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
                       turn.status === "error" ? "w-full sm:max-w-[48rem]" : "w-fit",
                     )}
                   >
                     {turn.status === "loading" ? <LoadingBubble count={turn.count || 1} /> : null}
                     {turn.status === "error" ? <p className="text-sm leading-6 text-rose-200">{turn.error}</p> : null}
-                    {turn.status === "done" ? (
-                      <div className="space-y-3">
-                        <p className="text-xs text-stone-400">
-                          已生成 {turn.images.length > 0 ? turn.images.length : turn.imageCount || 0} 张图片
-                        </p>
-                        <div className="grid max-w-full grid-cols-[repeat(auto-fit,minmax(min(16rem,100%),16rem))] gap-3">
-                          {turn.images.map((image) => (
-                            <GeneratedImageCard
-                              key={image.id}
-                              image={image}
-                              onPreview={setPreviewImage}
-                              onContinueEdit={handleContinueEdit}
-                              onReuse={handleReuse}
-                              onDownload={handleDownload}
-                            />
-                          ))}
-                        </div>
+                    {turn.status === "done" && turn.images.length > 0 ? (
+                      <div className={cn("grid max-w-full gap-3", getGeneratedImageGridClass(turn.images.length))}>
+                        {turn.images.map((image) => (
+                          <GeneratedImageCard
+                            key={image.id}
+                            image={image}
+                            onPreview={setPreviewImage}
+                            onContinueEdit={handleContinueEdit}
+                            onReuse={handleReuse}
+                            onDownload={handleDownload}
+                          />
+                        ))}
                       </div>
                     ) : null}
                   </div>
@@ -998,39 +1100,47 @@ export default function Home() {
             }}
             onDragLeave={() => setReferenceDragging(false)}
             onDrop={handleDropReference}
+            onPaste={handlePasteReference}
           >
             <form onSubmit={handleGenerate} className="space-y-3">
               {error ? (
                 <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">{error}</div>
               ) : null}
 
-              {referencePreviewUrl ? (
-                <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-2">
-                  <div className="grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg border border-white/10 bg-ink">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={referencePreviewUrl} alt="参考图预览" className="h-full w-full object-cover" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-white">参考图已就绪</p>
-                    <p className="truncate text-xs text-stone-400">
-                      {activeSession.draft.referenceImageMeta?.name || "拖拽图片到输入区可替换参考图"}
+              {hasReferenceImages ? (
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-2">
+                  <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                    <p className="text-xs font-medium text-white">
+                      参考图 {referenceImages.length}/{MAX_REFERENCE_IMAGES}
+                    </p>
+                    <p className="text-xs text-stone-400">
+                      {referenceImages.length < MAX_REFERENCE_IMAGES ? `还可添加 ${MAX_REFERENCE_IMAGES - referenceImages.length} 张` : "已达上限"}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActiveSessionDraft((draft) => ({
-                        ...draft,
-                        referenceImageSource: "",
-                        referenceImageMeta: null,
-                      }))
-                    }
-                    className="grid size-8 place-items-center rounded-md border border-white/10 text-stone-300 transition hover:border-coral/60 hover:text-coral"
-                    title="移除参考图"
-                  >
-                    <X className="size-4" aria-hidden />
-                    <span className="sr-only">移除参考图</span>
-                  </button>
+                  <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+                    {referenceImages.map((reference, index) => (
+                      <div
+                        key={reference.id}
+                        className="group relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-ink"
+                        title={reference.meta?.name || `参考图 ${index + 1}`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={reference.source} alt={`参考图 ${index + 1}`} className="h-full w-full object-cover" />
+                        <span className="absolute left-1 top-1 grid size-5 place-items-center rounded bg-black/60 text-[11px] font-medium text-white">
+                          {index + 1}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeReferenceImage(reference.id)}
+                          className="absolute right-1 top-1 grid size-6 place-items-center rounded bg-black/60 text-white opacity-90 transition hover:bg-coral hover:text-ink sm:opacity-0 sm:group-hover:opacity-100"
+                          title="移除参考图"
+                        >
+                          <X className="size-3.5" aria-hidden />
+                          <span className="sr-only">移除参考图</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : null}
 
@@ -1048,11 +1158,10 @@ export default function Home() {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                onPaste={handlePasteReference}
                 disabled={activeSessionGenerating}
                 maxLength={2000}
                 rows={2}
-                placeholder={referencePreviewUrl ? "输入你想如何继续修改这张图..." : "输入你想生成的画面，也可直接粘贴图片"}
+                placeholder={hasReferenceImages ? "输入你想如何继续修改参考图..." : "输入你想生成的画面，也可直接粘贴图片"}
                 className="min-h-20 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 text-white outline-none placeholder:text-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
               />
 
@@ -1099,9 +1208,10 @@ export default function Home() {
                   ref={imageInputRef}
                   type="file"
                   accept="image/*"
+                  multiple
                   className="hidden"
                   onChange={(event) => {
-                    handleReferenceImageFiles(event.target.files?.[0] || null);
+                    handleReferenceImageFileList(event.target.files);
                     event.currentTarget.value = "";
                   }}
                   disabled={activeSessionGenerating}
@@ -1536,20 +1646,17 @@ function GeneratedImageCard({
   onDownload: (image: GeneratedImage) => void;
 }) {
   const src = getImageSrc(image);
-  const imageSize = parseImageSize(image.size);
-  const thumbnailAspectRatio = imageSize ? `${imageSize.width} / ${imageSize.height}` : "1 / 1";
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
   const { downloadStatus, downloadDisabled, triggerDownloadWithFeedback } = useDownloadFeedback(() => onDownload(image));
 
   return (
-    <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
+    <div className="generated-image-card overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
       <button
         type="button"
         onClick={() => onPreview(image)}
-        className="relative block w-full text-left transition hover:bg-white/[0.04]"
+        className="relative block aspect-square w-full text-left transition hover:bg-white/[0.04]"
         title="预览大图"
-        style={{ aspectRatio: thumbnailAspectRatio }}
       >
         {!imgLoaded && !imgError ? <div className="absolute inset-0 animate-pulse rounded-t-lg bg-white/[0.06]" /> : null}
         {imgError ? <div className="absolute inset-0 grid place-items-center rounded-t-lg bg-white/[0.04] text-xs text-stone-500">图片加载失败</div> : null}
@@ -1565,13 +1672,12 @@ function GeneratedImageCard({
           }}
         />
       </button>
-      <div className="space-y-2 border-t border-white/10 p-2">
-        <p className="line-clamp-2 text-xs leading-5 text-stone-300">{image.prompt}</p>
+      <div className="border-t border-white/10 p-2">
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => onContinueEdit(image)}
-            className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-mint/40 bg-mint/10 px-2 py-1.5 text-xs font-medium text-mint transition hover:bg-mint hover:text-ink"
+            className="continue-edit-button inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-mint/40 bg-mint/10 px-2 py-1.5 text-xs font-medium text-mint transition hover:bg-mint hover:text-ink"
           >
             <WandSparkles className="size-3.5" aria-hidden />
             继续改图
@@ -1636,8 +1742,7 @@ function buildImageEditFormData({
   quality,
   count,
   apiConfig,
-  image,
-  referenceImageUrl,
+  images,
 }: {
   prompt: string;
   size: ImageSize;
@@ -1645,8 +1750,7 @@ function buildImageEditFormData({
   quality: ImageQuality;
   count: number;
   apiConfig: Partial<ImageApiConfig>;
-  image: File | null;
-  referenceImageUrl?: string;
+  images: File[];
 }) {
   const formData = new FormData();
   formData.append("prompt", prompt);
@@ -1655,12 +1759,9 @@ function buildImageEditFormData({
   formData.append("quality", quality);
   formData.append("n", String(count));
   formData.append("apiConfig", JSON.stringify(apiConfig));
-  if (image) {
-    formData.append("image", image);
-  }
-  if (referenceImageUrl) {
-    formData.append("referenceImageUrl", referenceImageUrl);
-  }
+  images.slice(0, MAX_REFERENCE_IMAGES).forEach((image) => {
+    formData.append("image", image, image.name || "reference.png");
+  });
   return formData;
 }
 
@@ -1741,6 +1842,7 @@ function normalizeDraft(draft: Partial<ChatDraft> | undefined): ChatDraft {
     resolution: isImageResolution(draft?.resolution) ? draft.resolution : DEFAULT_DRAFT.resolution,
     quality: isImageQuality(draft?.quality) ? draft.quality : DEFAULT_DRAFT.quality,
     count: typeof draft?.count === "number" && draft.count >= 1 && draft.count <= 9 ? draft.count : DEFAULT_DRAFT.count,
+    referenceImages: normalizeReferenceImages(draft),
     referenceImageSource: typeof draft?.referenceImageSource === "string" ? draft.referenceImageSource : "",
     referenceImageMeta:
       draft?.referenceImageMeta && typeof draft.referenceImageMeta === "object"
@@ -1749,6 +1851,51 @@ function normalizeDraft(draft: Partial<ChatDraft> | undefined): ChatDraft {
             type: typeof draft.referenceImageMeta.type === "string" ? draft.referenceImageMeta.type : undefined,
           }
         : null,
+  };
+}
+
+function normalizeReferenceImages(draft: Partial<ChatDraft> | undefined): ReferenceImageDraft[] {
+  if (Array.isArray(draft?.referenceImages)) {
+    return draft.referenceImages
+      .map((reference) => {
+        const source = typeof reference?.source === "string" ? reference.source.trim() : "";
+        if (!source) {
+          return null;
+        }
+
+        return {
+          id: typeof reference.id === "string" && reference.id ? reference.id : createReferenceImageId(),
+          source,
+          meta: normalizeReferenceImageMeta(reference.meta),
+        };
+      })
+      .filter((reference): reference is ReferenceImageDraft => Boolean(reference))
+      .slice(0, MAX_REFERENCE_IMAGES);
+  }
+
+  const legacySource = typeof draft?.referenceImageSource === "string" ? draft.referenceImageSource.trim() : "";
+  if (!legacySource) {
+    return [];
+  }
+
+  return [
+    {
+      id: createReferenceImageId(),
+      source: legacySource,
+      meta: normalizeReferenceImageMeta(draft?.referenceImageMeta),
+    },
+  ];
+}
+
+function normalizeReferenceImageMeta(meta: unknown): ReferenceImageDraft["meta"] {
+  if (!meta || typeof meta !== "object") {
+    return null;
+  }
+
+  const value = meta as { name?: unknown; type?: unknown };
+  return {
+    name: typeof value.name === "string" ? value.name : undefined,
+    type: typeof value.type === "string" ? value.type : undefined,
   };
 }
 
@@ -1802,6 +1949,26 @@ function getImageIdsFromTurn(turn: ChatTurn) {
 
 function getImageIdsFromTurnsFromSession(session: ChatSession) {
   return session.turns.flatMap((turn) => (turn.imageIds?.length ? turn.imageIds : turn.images.map((image) => image.id)));
+}
+
+function isColorTheme(value: unknown): value is ColorTheme {
+  return value === "day" || value === "night";
+}
+
+function getGeneratedImageGridClass(count: number) {
+  if (count <= 1) {
+    return "w-48 grid-cols-1";
+  }
+
+  if (count === 2) {
+    return "w-[25rem] max-w-full grid-cols-2";
+  }
+
+  if (count === 3) {
+    return "w-[25rem] max-w-full grid-cols-2 lg:w-[38rem] lg:grid-cols-3";
+  }
+
+  return "w-[25rem] max-w-full grid-cols-2 lg:w-[38rem] lg:grid-cols-3 2xl:w-[52rem] 2xl:grid-cols-4";
 }
 
 function hasLoadingTurn(session: ChatSession) {
@@ -1875,16 +2042,36 @@ function createChatSessionId() {
   return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-function getFirstImageFileFromDataTransfer(dataTransfer: DataTransfer) {
-  const itemFile = Array.from(dataTransfer.items || [])
-    .find((item) => item.kind === "file" && item.type.startsWith("image/"))
-    ?.getAsFile();
+function createReferenceImageId() {
+  return `ref_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
 
-  if (itemFile) {
-    return itemFile;
-  }
+function getImageFilesFromDataTransfer(dataTransfer: DataTransfer) {
+  const itemFiles = Array.from(dataTransfer.items || [])
+    .filter((item) => item.kind === "file" && (!item.type || item.type.startsWith("image/")))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
 
-  return Array.from(dataTransfer.files || []).find((file) => file.type.startsWith("image/")) || null;
+  const transferFiles = Array.from(dataTransfer.files || []);
+  const seen = new Set<string>();
+
+  return [...itemFiles, ...transferFiles].filter((file) => {
+    if (!isImageFile(file)) {
+      return false;
+    }
+
+    const key = `${file.name}:${file.type}:${file.size}:${file.lastModified}`;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
 }
 
 async function buildReferenceFileFromSource(src: string) {

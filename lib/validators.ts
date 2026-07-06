@@ -142,6 +142,10 @@ function parseApiConfig(input: unknown):
     }
   }
 
+  if (apiKey && !isAsciiHeaderValue(apiKey)) {
+    return { ok: false, message: "API Key 不能包含中文、全角字符或换行，请在设置里填入真实的英文/数字密钥。" };
+  }
+
   if (apiKey.length > 10000 || model.length > 200 || apiUrl.length > 2000) {
     return { ok: false, message: "API 设置内容过长。" };
   }
@@ -154,4 +158,8 @@ function parseApiConfig(input: unknown):
       ...(model ? { model } : {}),
     },
   };
+}
+
+function isAsciiHeaderValue(value: string) {
+  return /^[\x20-\x7E]+$/.test(value);
 }

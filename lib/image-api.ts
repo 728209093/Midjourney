@@ -74,6 +74,22 @@ class ProviderRequestError extends Error {
 const PROVIDER_MAX_ATTEMPTS = 3;
 const PROVIDER_RETRY_DELAYS_MS = [0, 400, 1200] as const;
 
+function assertValidApiKey(apiKey: string) {
+  if (!/^[\x20-\x7E]+$/.test(apiKey)) {
+    throw new Error("API Key 不能包含中文、全角字符或换行，请在设置里填入真实的英文/数字密钥。");
+  }
+}
+
+function getSafeReferenceFileName(image: File, index: number) {
+  return `reference-${index + 1}.${getImageFileExtension(image.type)}`;
+}
+
+function getImageFileExtension(type: string) {
+  if (type === "image/jpeg") return "jpg";
+  if (type === "image/webp") return "webp";
+  return "png";
+}
+
 export async function generateImages(
   params: ImageGenerateParams,
   apiConfig?: Partial<ImageApiConfig>,
@@ -85,6 +101,8 @@ export async function generateImages(
   if (!endpoint || !apiKey) {
     throw new Error("服务端图片 API 尚未配置，请检查 IMAGE_API_URL 和 IMAGE_API_KEY。");
   }
+
+  assertValidApiKey(apiKey);
 
   return requestProviderImages({
     kind: "generate",
@@ -134,6 +152,8 @@ export async function editImages(
     throw new Error("缺少参考图。");
   }
 
+  assertValidApiKey(apiKey);
+
   return requestProviderImages({
     kind: "edit",
     endpoint,
@@ -148,8 +168,8 @@ export async function editImages(
       formData.append("n", String(params.n));
 
       if (uploadedImages.length > 0) {
-        uploadedImages.forEach((image) => {
-          formData.append("image", image, image.name || "reference.png");
+        uploadedImages.forEach((image, index) => {
+          formData.append("image", image, getSafeReferenceFileName(image, index));
         });
       } else if (params.referenceImageUrl) {
         formData.append("referenceImageUrl", params.referenceImageUrl);

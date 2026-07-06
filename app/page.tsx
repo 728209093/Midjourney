@@ -172,6 +172,7 @@ export default function Home() {
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const aspectPanelRef = useRef<HTMLDivElement>(null);
   const countPanelRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLElement>(null);
   const activeSessionIdRef = useRef(activeSessionId);
 
   const activeSession = useMemo(
@@ -554,7 +555,7 @@ export default function Home() {
         ...session,
         draft: {
           ...session.draft,
-          prompt: "",
+          prompt: session.draft.prompt === promptText ? "" : session.draft.prompt,
         },
       }));
     } catch (requestError) {
@@ -827,6 +828,42 @@ export default function Home() {
     });
   }
 
+  function handleReferenceImageSources(sources: string[]) {
+    const uniqueSources = sources
+      .map((source) => normalizePastedImageSource(source))
+      .filter((source): source is string => Boolean(source))
+      .filter((source, index, list) => list.indexOf(source) === index)
+      .filter((source) => !activeSession.draft.referenceImages.some((reference) => reference.source === source));
+
+    if (uniqueSources.length === 0) {
+      return false;
+    }
+
+    const availableSlots = MAX_REFERENCE_IMAGES - activeSession.draft.referenceImages.length;
+    if (availableSlots <= 0) {
+      setError(`最多支持 ${MAX_REFERENCE_IMAGES} 张参考图，请先删除一张后再上传。`);
+      return true;
+    }
+
+    const sourcesToAdd = uniqueSources.slice(0, availableSlots);
+    setActiveSessionDraft((draft) => ({
+      ...draft,
+      referenceImages: [
+        ...draft.referenceImages,
+        ...sourcesToAdd.map((source, index) => ({
+          id: createReferenceImageId(),
+          source,
+          meta: {
+            name: `pasted-image-${Date.now()}-${index + 1}.${getReferenceExtensionFromSource(source)}`,
+            type: getReferenceMimeTypeFromSource(source),
+          },
+        })),
+      ].slice(0, MAX_REFERENCE_IMAGES),
+    }));
+    setError(uniqueSources.length > availableSlots ? `最多支持 ${MAX_REFERENCE_IMAGES} 张参考图，已补满上限。` : "");
+    return true;
+  }
+
   function removeReferenceImage(id: string) {
     setActiveSessionDraft((draft) => ({
       ...draft,
@@ -869,22 +906,52 @@ export default function Home() {
   function handleDropReference(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     setReferenceDragging(false);
-    if (activeSessionGenerating) return;
     const files = getImageFilesFromDataTransfer(event.dataTransfer);
     handleReferenceImageFileList(files);
   }
 
   function handlePasteReference(event: React.ClipboardEvent<HTMLElement>) {
-    if (activeSessionGenerating) return;
-
-    const files = getImageFilesFromDataTransfer(event.clipboardData);
-    if (files.length === 0) {
+    if (!handleClipboardReference(event.clipboardData)) {
       return;
     }
 
     event.preventDefault();
-    handleReferenceImageFileList(files);
+    event.stopPropagation();
   }
+
+  function handleClipboardReference(dataTransfer: DataTransfer | null) {
+    if (!dataTransfer) {
+      return false;
+    }
+
+    const files = getImageFilesFromDataTransfer(dataTransfer);
+    if (files.length > 0) {
+      handleReferenceImageFileList(files);
+      return true;
+    }
+
+    return handleReferenceImageSources(getImageSourcesFromClipboard(dataTransfer));
+  }
+
+  useEffect(() => {
+    function handleDocumentPaste(event: ClipboardEvent) {
+      const composer = composerRef.current;
+      const target = event.target;
+      if (!composer || !(target instanceof Node) || !composer.contains(target)) {
+        return;
+      }
+
+      if (!handleClipboardReference(event.clipboardData)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    document.addEventListener("paste", handleDocumentPaste, true);
+    return () => document.removeEventListener("paste", handleDocumentPaste, true);
+  }, [activeSessionId, activeSession.draft.referenceImages]);
 
   return (
     <main className="flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto lg:h-screen lg:overflow-hidden">
@@ -907,7 +974,7 @@ export default function Home() {
         onClose={() => setSettingsOpen(false)}
       />
 
-      <div className="mx-auto flex min-h-0 w-full max-w-[1840px] flex-1 flex-col gap-4 px-4 pb-4 pt-20 sm:px-6 xl:px-8 lg:flex-row">
+      <div className="flex min-h-0 w-full flex-1 flex-col gap-3 px-3 pb-3 pt-20 sm:px-4 xl:px-5 lg:flex-row">
         <aside className="min-h-0 w-full shrink-0 overflow-hidden rounded-lg border border-white/10 bg-panel/55 shadow-soft lg:w-80 xl:w-84">
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
             <div>
@@ -1018,7 +1085,7 @@ export default function Home() {
           </div>
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
           <section
             id="history"
             ref={chatRef}
@@ -1089,8 +1156,9 @@ export default function Home() {
 
           <section
             id="composer"
+            ref={composerRef}
             className={cn(
-              "sticky bottom-2 z-30 rounded-2xl border bg-panel/92 p-3 shadow-soft backdrop-blur lg:static lg:bottom-auto lg:z-auto",
+              "sticky bottom-2 z-30 rounded-xl border bg-panel/92 p-2.5 shadow-soft backdrop-blur lg:static lg:bottom-auto lg:z-auto",
               referenceDragging ? "border-mint bg-mint/[0.08]" : "border-white/10",
             )}
             onDragEnter={() => setReferenceDragging(true)}
@@ -1102,7 +1170,7 @@ export default function Home() {
             onDrop={handleDropReference}
             onPaste={handlePasteReference}
           >
-            <form onSubmit={handleGenerate} className="space-y-3">
+            <form onSubmit={handleGenerate} className="space-y-2">
               {error ? (
                 <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">{error}</div>
               ) : null}
@@ -1117,11 +1185,11 @@ export default function Home() {
                       {referenceImages.length < MAX_REFERENCE_IMAGES ? `还可添加 ${MAX_REFERENCE_IMAGES - referenceImages.length} 张` : "已达上限"}
                     </p>
                   </div>
-                  <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+                  <div className="flex flex-wrap gap-2">
                     {referenceImages.map((reference, index) => (
                       <div
                         key={reference.id}
-                        className="group relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-ink"
+                        className="group relative size-16 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-ink sm:size-20"
                         title={reference.meta?.name || `参考图 ${index + 1}`}
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1158,11 +1226,11 @@ export default function Home() {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                disabled={activeSessionGenerating}
+                onPaste={handlePasteReference}
                 maxLength={2000}
                 rows={2}
                 placeholder={hasReferenceImages ? "输入你想如何继续修改参考图..." : "输入你想生成的画面，也可直接粘贴图片"}
-                className="min-h-20 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 text-white outline-none placeholder:text-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-14 min-h-14 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 text-white outline-none placeholder:text-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
               />
 
               <div className="flex flex-wrap items-center gap-2">
@@ -2027,11 +2095,19 @@ function normalizeApiConfig(config: ImageApiConfig): Partial<ImageApiConfig> {
     }
   }
 
+  if (apiKey && !isAsciiHeaderValue(apiKey)) {
+    throw new Error("API Key 不能包含中文、全角字符或换行，请在设置里填入真实的英文/数字密钥。");
+  }
+
   return {
     ...(apiUrl ? { apiUrl } : {}),
     ...(apiKey ? { apiKey } : {}),
     ...(model ? { model } : {}),
   };
+}
+
+function isAsciiHeaderValue(value: string) {
+  return /^[\x20-\x7E]+$/.test(value);
 }
 
 function createChatTurnId() {
@@ -2072,6 +2148,66 @@ function getImageFilesFromDataTransfer(dataTransfer: DataTransfer) {
 
 function isImageFile(file: File) {
   return file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name);
+}
+
+function getImageSourcesFromClipboard(dataTransfer: DataTransfer) {
+  const sources: string[] = [];
+  const html = dataTransfer.getData("text/html");
+  if (html) {
+    sources.push(...getImageSourcesFromHtml(html));
+  }
+
+  const uriList = dataTransfer.getData("text/uri-list");
+  if (uriList) {
+    sources.push(
+      ...uriList
+        .split(/\r?\n/)
+        .filter((line) => line && !line.startsWith("#") && isLikelyPastedImageSource(line)),
+    );
+  }
+
+  const plainText = dataTransfer.getData("text/plain");
+  if (plainText && isLikelyPastedImageSource(plainText)) {
+    sources.push(plainText);
+  }
+
+  return sources;
+}
+
+function getImageSourcesFromHtml(html: string) {
+  try {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    return Array.from(document.images).map((image) => image.currentSrc || image.src);
+  } catch {
+    return [];
+  }
+}
+
+function normalizePastedImageSource(source: string) {
+  const trimmed = source.trim();
+  if (/^data:image\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  try {
+    const url = new URL(trimmed, window.location.href);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function isLikelyPastedImageSource(source: string) {
+  const trimmed = source.trim();
+  return /^data:image\//i.test(trimmed) || /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#].*)?$/i.test(trimmed);
 }
 
 async function buildReferenceFileFromSource(src: string) {

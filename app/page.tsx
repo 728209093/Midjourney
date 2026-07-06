@@ -43,6 +43,8 @@ const CHAT_STORE_KEY = "ai-image-studio-chat-store";
 const API_CONFIG_KEY = "ai-image-studio-api-config";
 const MAX_HISTORY_ITEMS = 20;
 const MAX_SESSION_ITEMS = 20;
+const HYDRATION_SESSION_ID = "chat_hydration";
+const HYDRATION_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const DEFAULT_API_CONFIG: ImageApiConfig = {
   apiUrl: "https://dahlo.live",
   apiKey: "",
@@ -134,13 +136,14 @@ const DEFAULT_DRAFT: ChatDraft = {
 };
 
 export default function Home() {
-  const [sessions, setSessions] = useState<ChatSession[]>(() => [createBlankSession()]);
-  const [activeSessionId, setActiveSessionId] = useState(() => createChatSessionId());
+  const [sessions, setSessions] = useState<ChatSession[]>(() => [createHydrationSession()]);
+  const [activeSessionId, setActiveSessionId] = useState(HYDRATION_SESSION_ID);
   const [apiConfig, setApiConfig] = useState<ImageApiConfig>(DEFAULT_API_CONFIG);
   const [error, setError] = useState("");
   const [settingsMessage, setSettingsMessage] = useState<SettingsMessage | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<GeneratedImage | null>(null);
+  const [clientReady, setClientReady] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
@@ -161,7 +164,7 @@ export default function Home() {
   const activeSessionIdRef = useRef(activeSessionId);
 
   const activeSession = useMemo(
-    () => sessions.find((session) => session.id === activeSessionId) || sessions[0] || createBlankSession(),
+    () => sessions.find((session) => session.id === activeSessionId) || sessions[0] || createHydrationSession(),
     [sessions, activeSessionId],
   );
   const activeSessionGenerating = hasLoadingTurn(activeSession);
@@ -186,6 +189,11 @@ export default function Home() {
     [activeSession.draft.size],
   );
   const referencePreviewUrl = activeSession.draft.referenceImageSource;
+
+  useEffect(() => {
+    setClientReady(true);
+  }, []);
+
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
@@ -194,6 +202,8 @@ export default function Home() {
     let cancelled = false;
 
     async function loadLocalState() {
+      let restoredLocalState = false;
+
       try {
         const rawStore = window.localStorage.getItem(CHAT_STORE_KEY);
         if (rawStore) {
@@ -209,6 +219,7 @@ export default function Home() {
 
             setSessions(hydratedSessions);
             setActiveSessionId(activeId && hydratedSessions.some((session) => session.id === activeId) ? activeId : hydratedSessions[0].id);
+            restoredLocalState = true;
           } else {
             throw new Error("Empty session store");
           }
@@ -230,12 +241,19 @@ export default function Home() {
 
               setSessions([session]);
               setActiveSessionId(session.id);
+              restoredLocalState = true;
             }
           }
         }
       } catch {
         window.localStorage.removeItem(CHAT_STORE_KEY);
         window.localStorage.removeItem(HISTORY_KEY);
+      }
+
+      if (!restoredLocalState && !cancelled) {
+        const session = createBlankSession();
+        setSessions([session]);
+        setActiveSessionId(session.id);
       }
 
       try {
@@ -852,7 +870,7 @@ export default function Home() {
                                 sessionGenerating ? "text-mint" : sessionFailed ? "text-coral" : "text-stone-400",
                               )}
                             >
-                              {getSessionStatusText(session)}
+                              {clientReady ? getSessionStatusText(session) : ""}
                             </p>
                           </>
                         )}
@@ -1746,9 +1764,13 @@ function isImageQuality(value: unknown): value is ImageQuality {
   return typeof value === "string" && QUALITY_OPTIONS.some((option) => option.value === value);
 }
 
-function createBlankSession(): ChatSession {
-  const id = createChatSessionId();
-  const now = new Date().toISOString();
+function createHydrationSession(): ChatSession {
+  return createBlankSession({ id: HYDRATION_SESSION_ID, now: HYDRATION_TIMESTAMP });
+}
+
+function createBlankSession(options: { id?: string; now?: string } = {}): ChatSession {
+  const id = options.id || createChatSessionId();
+  const now = options.now || new Date().toISOString();
   return {
     id,
     title: "新聊天",

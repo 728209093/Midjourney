@@ -53,6 +53,7 @@ const DEFAULT_API_CONFIG: ImageApiConfig = {
   apiKey: "",
   model: "gpt-image-2",
 };
+const handledClipboardPasteEvents = new WeakSet<Event>();
 
 const ASPECT_OPTIONS: Array<{ label: string; size: ImageSize; detail: string }> = [
   { label: "1:1", size: "1024x1024", detail: "1024 x 1024" },
@@ -838,10 +839,23 @@ export default function Home() {
         })),
       );
 
-      setActiveSessionDraft((draft) => ({
-        ...draft,
-        referenceImages: [...draft.referenceImages, ...nextReferenceImages].slice(0, MAX_REFERENCE_IMAGES),
-      }));
+      setActiveSessionDraft((draft) => {
+        const existingSources = new Set(draft.referenceImages.map((reference) => reference.source));
+        const batchSources = new Set<string>();
+        const uniqueReferenceImages = nextReferenceImages.filter((reference) => {
+          if (existingSources.has(reference.source) || batchSources.has(reference.source)) {
+            return false;
+          }
+
+          batchSources.add(reference.source);
+          return true;
+        });
+
+        return {
+          ...draft,
+          referenceImages: [...draft.referenceImages, ...uniqueReferenceImages].slice(0, MAX_REFERENCE_IMAGES),
+        };
+      });
       setError(selectedFiles.length > availableSlots ? `最多支持 ${MAX_REFERENCE_IMAGES} 张参考图，已补满上限。` : "");
     })().catch(() => {
       setError("参考图读取失败，请重试。");
@@ -931,10 +945,17 @@ export default function Home() {
   }
 
   function handlePasteReference(event: React.ClipboardEvent<HTMLElement>) {
+    if (handledClipboardPasteEvents.has(event.nativeEvent)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (!handleClipboardReference(event.clipboardData)) {
       return;
     }
 
+    handledClipboardPasteEvents.add(event.nativeEvent);
     event.preventDefault();
     event.stopPropagation();
   }
@@ -961,10 +982,17 @@ export default function Home() {
         return;
       }
 
+      if (handledClipboardPasteEvents.has(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (!handleClipboardReference(event.clipboardData)) {
         return;
       }
 
+      handledClipboardPasteEvents.add(event);
       event.preventDefault();
       event.stopPropagation();
     }
@@ -2308,7 +2336,7 @@ function getImageFilesFromDataTransfer(dataTransfer: DataTransfer) {
       return false;
     }
 
-    const key = `${file.name}:${file.type}:${file.size}:${file.lastModified}`;
+    const key = getTransferImageFileKey(file);
     if (seen.has(key)) {
       return false;
     }
@@ -2316,6 +2344,10 @@ function getImageFilesFromDataTransfer(dataTransfer: DataTransfer) {
     seen.add(key);
     return true;
   });
+}
+
+function getTransferImageFileKey(file: File) {
+  return `${file.name || "clipboard-image"}:${file.type || "application/octet-stream"}:${file.size}`;
 }
 
 function isImageFile(file: File) {

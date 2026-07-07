@@ -37,6 +37,7 @@ import type {
   ImageQuality,
   ImageResolution,
   ImageSize,
+  ModelListResponse,
 } from "@/types/image";
 
 const HISTORY_KEY = "ai-image-studio-history";
@@ -53,6 +54,7 @@ const DEFAULT_API_CONFIG: ImageApiConfig = {
   apiKey: "",
   model: "gpt-image-2",
 };
+const BUILT_IN_MODEL_OPTIONS = ["gpt-image-2", "gemini-3.1-flash-image"];
 const handledClipboardPasteEvents = new WeakSet<Event>();
 
 const ASPECT_OPTIONS: Array<{ label: string; size: ImageSize; detail: string }> = [
@@ -165,6 +167,10 @@ export default function Home() {
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [aspectPanelOpen, setAspectPanelOpen] = useState(false);
   const [countPanelOpen, setCountPanelOpen] = useState(false);
+  const [modelPanelOpen, setModelPanelOpen] = useState(false);
+  const [modelOptions, setModelOptions] = useState<string[]>(BUILT_IN_MODEL_OPTIONS);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [referenceDragging, setReferenceDragging] = useState(false);
@@ -177,6 +183,7 @@ export default function Home() {
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const aspectPanelRef = useRef<HTMLDivElement>(null);
   const countPanelRef = useRef<HTMLDivElement>(null);
+  const modelPanelRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLElement>(null);
   const activeSessionIdRef = useRef(activeSessionId);
 
@@ -204,6 +211,11 @@ export default function Home() {
   const selectedAspectOption = useMemo(
     () => ASPECT_OPTIONS.find((option) => option.size === activeSession.draft.size) || ASPECT_OPTIONS[0],
     [activeSession.draft.size],
+  );
+  const selectedModel = apiConfig.model || DEFAULT_API_CONFIG.model;
+  const visibleModelOptions = useMemo(
+    () => Array.from(new Set([selectedModel, ...modelOptions].filter((model) => model.trim()))),
+    [modelOptions, selectedModel],
   );
   const referenceImages = activeSession.draft.referenceImages;
   const hasReferenceImages = referenceImages.length > 0;
@@ -328,11 +340,13 @@ export default function Home() {
         const rawConfig = window.localStorage.getItem(API_CONFIG_KEY);
         if (rawConfig && !cancelled) {
           const config = JSON.parse(rawConfig) as Partial<ImageApiConfig>;
+          const model = typeof config.model === "string" && config.model ? config.model : "gpt-image-2";
           setApiConfig({
             apiUrl: typeof config.apiUrl === "string" ? config.apiUrl : "",
             apiKey: typeof config.apiKey === "string" ? config.apiKey : "",
-            model: typeof config.model === "string" && config.model ? config.model : "gpt-image-2",
+            model,
           });
+          setModelOptions((current) => Array.from(new Set([model, ...BUILT_IN_MODEL_OPTIONS, ...current])));
         }
       } catch {
         window.localStorage.removeItem(API_CONFIG_KEY);
@@ -377,19 +391,20 @@ export default function Home() {
   }, [activeSession.turns, activeSessionId]);
 
   useEffect(() => {
-    if (!settingsOpen && !uploadMenuOpen && !aspectPanelOpen && !countPanelOpen) return;
+    if (!settingsOpen && !uploadMenuOpen && !aspectPanelOpen && !countPanelOpen && !modelPanelOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSettingsOpen(false);
         setUploadMenuOpen(false);
         setAspectPanelOpen(false);
         setCountPanelOpen(false);
+        setModelPanelOpen(false);
         setEditingSessionId(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen, uploadMenuOpen, aspectPanelOpen, countPanelOpen]);
+  }, [settingsOpen, uploadMenuOpen, aspectPanelOpen, countPanelOpen, modelPanelOpen]);
 
   useEffect(() => {
     if (!pendingDeleteTurnId) return;
@@ -417,7 +432,7 @@ export default function Home() {
   }, [uploadMenuOpen]);
 
   useEffect(() => {
-    if (!aspectPanelOpen && !countPanelOpen) return;
+    if (!aspectPanelOpen && !countPanelOpen && !modelPanelOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
       if (aspectPanelOpen && aspectPanelRef.current && !aspectPanelRef.current.contains(target)) {
@@ -426,10 +441,13 @@ export default function Home() {
       if (countPanelOpen && countPanelRef.current && !countPanelRef.current.contains(target)) {
         setCountPanelOpen(false);
       }
+      if (modelPanelOpen && modelPanelRef.current && !modelPanelRef.current.contains(target)) {
+        setModelPanelOpen(false);
+      }
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [aspectPanelOpen, countPanelOpen]);
+  }, [aspectPanelOpen, countPanelOpen, modelPanelOpen]);
 
   const handleDownload = useCallback((image: GeneratedImage) => {
     const src = getImageSrc(image);
@@ -777,6 +795,65 @@ export default function Home() {
     scrollToComposer();
   }
 
+  const refreshModelOptions = useCallback(async () => {
+    setModelsLoading(true);
+    setModelsError("");
+
+    try {
+      const config = normalizeApiConfig(apiConfig);
+      const response = await fetch("/api/models", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify({ apiConfig: config }),
+      });
+      const data = await parseModelListResponse(response);
+
+      if (!data.success) {
+        throw new Error(data.message);
+      }
+
+      const models = data.models.map((model) => model.id).filter(Boolean);
+      setModelOptions((current) => Array.from(new Set([selectedModel, ...models, ...current])));
+
+      if (models.length === 0) {
+        setModelsError("没有获取到可用模型。");
+      }
+    } catch (modelError) {
+      setModelsError(modelError instanceof Error ? modelError.message : "模型列表获取失败，请稍后重试。");
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [apiConfig, selectedModel]);
+
+  function handleToggleModelPanel() {
+    const nextOpen = !modelPanelOpen;
+    setModelPanelOpen(nextOpen);
+
+    if (nextOpen) {
+      void refreshModelOptions();
+    }
+  }
+
+  function handleSelectModel(model: string) {
+    const nextConfig: ImageApiConfig = {
+      ...apiConfig,
+      model,
+    };
+    setApiConfig(nextConfig);
+    setModelOptions((current) => Array.from(new Set([model, ...current])));
+    setModelPanelOpen(false);
+
+    try {
+      const config = normalizeApiConfig(nextConfig);
+      window.localStorage.setItem(API_CONFIG_KEY, JSON.stringify(config));
+    } catch {
+      setError("模型已切换，但本地保存失败，请稍后重试。");
+    }
+  }
+
   function handleSaveApiConfig() {
     try {
       const config = normalizeApiConfig(apiConfig);
@@ -786,8 +863,10 @@ export default function Home() {
         apiKey: config.apiKey || "",
         model: config.model || "gpt-image-2",
       });
+      setModelOptions((current) => Array.from(new Set([config.model || "gpt-image-2", ...current])));
       setSettingsMessage(null);
       setSettingsOpen(false);
+      void refreshModelOptions();
     } catch (saveError) {
       setSettingsMessage({
         text: saveError instanceof Error ? saveError.message : "API 设置保存失败。",
@@ -799,6 +878,8 @@ export default function Home() {
   function handleResetApiConfig() {
     window.localStorage.removeItem(API_CONFIG_KEY);
     setApiConfig(DEFAULT_API_CONFIG);
+    setModelOptions(BUILT_IN_MODEL_OPTIONS);
+    setModelsError("");
     setSettingsMessage({ text: "已清除本地 API 设置。", tone: "info" });
     window.setTimeout(() => setSettingsMessage(null), 1600);
   }
@@ -1367,8 +1448,65 @@ export default function Home() {
                   disabled={activeSessionGenerating}
                 />
 
-                <div className="hidden h-10 items-center rounded-full bg-white/[0.05] px-4 text-sm text-stone-300 sm:inline-flex">
-                  模型&nbsp;<span className="max-w-[14rem] truncate text-white">{apiConfig.model || "gpt-image-2"}</span>
+                <div className="relative shrink-0" ref={modelPanelRef}>
+                  <button
+                    type="button"
+                    onClick={handleToggleModelPanel}
+                    disabled={activeSessionGenerating}
+                    className="inline-flex h-10 max-w-[18rem] items-center justify-center gap-2 rounded-full bg-white/[0.06] px-4 text-sm text-stone-200 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    title="选择模型"
+                  >
+                    <span className="shrink-0 text-stone-300">模型</span>
+                    <span className="min-w-0 truncate text-white">{selectedModel}</span>
+                    {modelsLoading ? (
+                      <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                    ) : (
+                      <ChevronDown className={cn("size-4 shrink-0 transition", modelPanelOpen ? "rotate-180" : "")} aria-hidden />
+                    )}
+                  </button>
+
+                  {modelPanelOpen ? (
+                    <div className="absolute bottom-full left-0 z-40 mb-2 w-72 rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                      <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                        <p className="text-xs text-stone-400">选择模型</p>
+                        <button
+                          type="button"
+                          onClick={() => void refreshModelOptions()}
+                          disabled={modelsLoading}
+                          className="inline-flex h-7 items-center gap-1 rounded-md border border-white/10 px-2 text-xs text-stone-300 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RotateCcw className={cn("size-3.5", modelsLoading ? "animate-spin" : "")} aria-hidden />
+                          刷新
+                        </button>
+                      </div>
+
+                      <div className="max-h-64 space-y-1 overflow-y-auto">
+                        {visibleModelOptions.map((model) => (
+                          <button
+                            key={model}
+                            type="button"
+                            onClick={() => handleSelectModel(model)}
+                            disabled={activeSessionGenerating}
+                            className={cn(
+                              "flex h-10 w-full items-center justify-between gap-3 rounded-xl px-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60",
+                              model === selectedModel
+                                ? "bg-mint text-ink"
+                                : "bg-white/[0.04] text-stone-200 hover:bg-white/[0.09] hover:text-white",
+                            )}
+                          >
+                            <span className="min-w-0 truncate">{model}</span>
+                            {model === selectedModel ? <Check className="size-4 shrink-0" aria-hidden /> : null}
+                          </button>
+                        ))}
+                      </div>
+
+                      {modelsError ? (
+                        <p className="mt-2 rounded-md border border-coral/40 bg-coral/[0.12] px-2.5 py-2 text-xs leading-5 text-coral">
+                          {modelsError}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="relative shrink-0" ref={countPanelRef}>
@@ -2284,7 +2422,7 @@ function isStorageQuotaError(error: unknown) {
 }
 
 function normalizeApiConfig(config: ImageApiConfig): Partial<ImageApiConfig> {
-  const apiUrl = config.apiUrl.trim();
+  const apiUrl = config.apiUrl.trim() || DEFAULT_API_CONFIG.apiUrl;
   const apiKey = config.apiKey.trim();
   const model = config.model.trim();
 
@@ -2565,6 +2703,33 @@ async function parseGenerateImageResponse(response: Response): Promise<GenerateI
   }
 
   return parsed as GenerateImageResponse;
+}
+
+async function parseModelListResponse(response: Response): Promise<ModelListResponse> {
+  const contentType = response.headers.get("content-type") || "";
+  const raw = await response.text();
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    throw new Error(`模型接口未返回内容，状态码 ${response.status}。`);
+  }
+
+  if (!contentType.includes("application/json")) {
+    throw new Error(`模型接口返回了非 JSON 内容，状态码 ${response.status}。`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed) as unknown;
+  } catch {
+    throw new Error(`模型接口返回了无法解析的 JSON，状态码 ${response.status}。`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || !("success" in parsed)) {
+    throw new Error(`模型接口响应格式异常，状态码 ${response.status}。`);
+  }
+
+  return parsed as ModelListResponse;
 }
 
 async function readFileAsDataUrl(file: File) {

@@ -36,6 +36,12 @@ export type ImageApiConfig = {
   model: string;
 };
 
+export type ImageModelOption = {
+  id: string;
+  created?: number;
+  ownedBy?: string;
+};
+
 export type GeneratedImage = {
   id: string;
   url?: string;
@@ -52,6 +58,16 @@ export type GenerateImageResponse =
   | {
       success: true;
       images: GeneratedImage[];
+    }
+  | {
+      success: false;
+      message: string;
+    };
+
+export type ModelListResponse =
+  | {
+      success: true;
+      models: ImageModelOption[];
     }
   | {
       success: false;

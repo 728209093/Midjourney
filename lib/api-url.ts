@@ -1,5 +1,6 @@
 const IMAGE_GENERATION_PATH = "/v1/images/generations";
 const IMAGE_EDIT_PATH = "/v1/images/edits";
+const IMAGE_MODELS_PATH = "/v1/models";
 
 export function validateApiBaseUrl(value: string):
   | { ok: true; baseUrl: string }
@@ -45,6 +46,14 @@ export function resolveImageGenerationUrl(baseUrl?: string) {
 
 export function resolveImageEditUrl(baseUrl?: string) {
   return resolveImageEndpointUrl(baseUrl, IMAGE_EDIT_PATH);
+}
+
+export function resolveImageModelsUrl(baseUrl?: string) {
+  return resolveImageEndpointUrl(baseUrl, IMAGE_MODELS_PATH);
+}
+
+export function resolveGeminiGenerateContentUrl(baseUrl: string | undefined, model: string) {
+  return resolveImageEndpointUrl(baseUrl, `/v1beta/models/${encodeURIComponent(model)}:generateContent`);
 }
 
 function resolveImageEndpointUrl(baseUrl: string | undefined, path: string) {

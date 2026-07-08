@@ -173,6 +173,7 @@ export default function Home() {
   const [modelsError, setModelsError] = useState("");
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(false);
   const [referenceDragging, setReferenceDragging] = useState(false);
   const [referenceImagesCollapsed, setReferenceImagesCollapsed] = useState(false);
   const [pendingDeleteTurnId, setPendingDeleteTurnId] = useState<string | null>(null);
@@ -186,12 +187,38 @@ export default function Home() {
   const modelPanelRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLElement>(null);
   const activeSessionIdRef = useRef(activeSessionId);
+  const pendingGenerateSessionIdsRef = useRef<Set<string>>(new Set());
+
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const container = chatRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+      setShowScrollButton(false);
+      return;
+    }
+
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
+
+  const scrollChatToBottomAfterPaint = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      window.requestAnimationFrame(() => {
+        scrollChatToBottom(behavior);
+        window.requestAnimationFrame(() => scrollChatToBottom(behavior));
+      });
+    },
+    [scrollChatToBottom],
+  );
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || sessions[0] || createHydrationSession(),
     [sessions, activeSessionId],
   );
   const activeSessionGenerating = hasLoadingTurn(activeSession);
+  const latestTurn = activeSession.turns[activeSession.turns.length - 1];
+  const latestTurnScrollKey = latestTurn
+    ? `${activeSessionId}:${latestTurn.id}:${latestTurn.status}:${latestTurn.images.length}:${latestTurn.error || ""}`
+    : `${activeSessionId}:empty`;
 
   const sortedSessions = useMemo(() => {
     return [...sessions].sort((left, right) => {
@@ -387,8 +414,8 @@ export default function Home() {
   }, [activeSessionId, sessions]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [activeSession.turns, activeSessionId]);
+    scrollChatToBottomAfterPaint("smooth");
+  }, [latestTurnScrollKey, scrollChatToBottomAfterPaint]);
 
   useEffect(() => {
     if (!settingsOpen && !uploadMenuOpen && !aspectPanelOpen && !countPanelOpen && !modelPanelOpen) return;
@@ -480,13 +507,22 @@ export default function Home() {
       return;
     }
 
-    if (activeSessionGenerating) {
+    const currentSession = activeSession;
+    const generationSessionId = currentSession.id;
+
+    if (pendingGenerateSessionIdsRef.current.has(generationSessionId) || hasLoadingTurn(currentSession)) {
       setError("当前聊天正在生图，请稍后再发起新的生成。");
       return;
     }
 
-    const currentSession = activeSession;
-    const generationSessionId = currentSession.id;
+    pendingGenerateSessionIdsRef.current.add(generationSessionId);
+    updateSessionById(generationSessionId, (session) => ({
+      ...session,
+      draft: {
+        ...session.draft,
+        prompt: "",
+      },
+    }));
     const turnId = createChatTurnId();
     const createdAt = new Date().toISOString();
     const effectiveMode: ImageMode = currentSession.draft.referenceImages.length > 0 ? "edit" : "generate";
@@ -496,6 +532,7 @@ export default function Home() {
         : [];
 
     if (effectiveMode === "edit" && referenceImageFiles.some((file) => !file)) {
+      pendingGenerateSessionIdsRef.current.delete(generationSessionId);
       setError("参考图暂时读取失败，请重新选择/上传参考图后再试。");
       return;
     }
@@ -526,9 +563,10 @@ export default function Home() {
       ],
       draft: {
         ...session.draft,
-        prompt: promptText,
+        prompt: "",
       },
     }));
+    scrollChatToBottomAfterPaint("auto");
 
     try {
       const apiConfigPayload = normalizeApiConfig(apiConfig);
@@ -590,13 +628,6 @@ export default function Home() {
         };
       });
 
-      updateSessionById(generationSessionId, (session) => ({
-        ...session,
-        draft: {
-          ...session.draft,
-          prompt: session.draft.prompt === promptText ? "" : session.draft.prompt,
-        },
-      }));
     } catch (requestError) {
       const message = getFriendlyGenerateErrorMessage(requestError);
       updateSessionById(generationSessionId, (session) => ({
@@ -607,6 +638,8 @@ export default function Home() {
       if (activeSessionIdRef.current === generationSessionId) {
         setError(message);
       }
+    } finally {
+      pendingGenerateSessionIdsRef.current.delete(generationSessionId);
     }
   }
 
@@ -746,7 +779,7 @@ export default function Home() {
   }
 
   function scrollToComposer() {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    scrollChatToBottomAfterPaint("smooth");
   }
 
   function handleReuse(image: GeneratedImage) {
@@ -1104,23 +1137,50 @@ export default function Home() {
       />
 
       <div className="flex min-h-0 w-full flex-1 flex-col gap-3 px-3 pb-3 pt-20 sm:px-4 xl:px-5 lg:flex-row">
-        <aside className="min-h-0 w-full shrink-0 overflow-hidden rounded-lg border border-white/10 bg-panel/55 shadow-soft lg:w-80 xl:w-84">
-          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-            <div>
+        <aside
+          className={cn(
+            "min-h-0 w-full shrink-0 overflow-hidden rounded-lg border border-white/10 bg-panel/55 shadow-soft transition-[width] duration-200",
+            sessionSidebarCollapsed ? "lg:w-16" : "lg:w-80 xl:w-84",
+          )}
+        >
+          <div
+            className={cn(
+              "flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3",
+              sessionSidebarCollapsed ? "lg:flex-col lg:border-b-0 lg:px-3" : "",
+            )}
+          >
+            <div className={cn("min-w-0", sessionSidebarCollapsed ? "lg:hidden" : "")}>
               <h2 className="text-sm font-semibold text-white">聊天分组</h2>
               <p className="mt-1 text-xs text-stone-400">{sortedSessions.length} 个会话</p>
             </div>
-            <button
-              type="button"
-              onClick={handleNewChat}
-              className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60"
-              title="新建聊天"
-            >
-              <Plus className="size-4" aria-hidden />
-              <span className="sr-only">新建聊天</span>
-            </button>
+
+            <div className={cn("flex shrink-0 items-center gap-2", sessionSidebarCollapsed ? "lg:flex-col" : "")}>
+              <button
+                type="button"
+                onClick={() => {
+                  setSessionSidebarCollapsed((current) => !current);
+                  setEditingSessionId(null);
+                }}
+                className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint"
+                title={sessionSidebarCollapsed ? "展开聊天分组" : "折叠聊天分组"}
+                aria-expanded={!sessionSidebarCollapsed}
+              >
+                {sessionSidebarCollapsed ? <ChevronRight className="size-4" aria-hidden /> : <ChevronLeft className="size-4" aria-hidden />}
+                <span className="sr-only">{sessionSidebarCollapsed ? "展开聊天分组" : "折叠聊天分组"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleNewChat}
+                className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint disabled:cursor-not-allowed disabled:opacity-60"
+                title="新建聊天"
+              >
+                <Plus className="size-4" aria-hidden />
+                <span className="sr-only">新建聊天</span>
+              </button>
+            </div>
           </div>
 
+          {sessionSidebarCollapsed ? null : (
           <div className="max-h-[32rem] overflow-y-auto p-2 lg:h-[calc(100dvh-8rem)] lg:max-h-none">
             <div className="space-y-2">
               {sortedSessions.map((session) => {
@@ -1212,6 +1272,7 @@ export default function Home() {
               })}
             </div>
           </div>
+          )}
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
@@ -1374,7 +1435,9 @@ export default function Home() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
+                    if (!activeSessionGenerating) {
+                      event.currentTarget.form?.requestSubmit();
+                    }
                   }
                 }}
                 onPaste={handlePasteReference}
@@ -1664,7 +1727,7 @@ export default function Home() {
       {showScrollButton ? (
         <button
           type="button"
-          onClick={() => bottomRef.current?.scrollIntoView({ behavior: "smooth" })}
+          onClick={() => scrollChatToBottom("smooth")}
           className="fixed bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full border border-white/10 bg-ink/90 px-4 py-2 text-sm text-white shadow-soft backdrop-blur"
         >
           <ChevronDown className="size-4" aria-hidden />

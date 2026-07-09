@@ -174,6 +174,7 @@ export default function Home() {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [referenceDragging, setReferenceDragging] = useState(false);
   const [referenceImagesCollapsed, setReferenceImagesCollapsed] = useState(false);
   const [pendingDeleteTurnId, setPendingDeleteTurnId] = useState<string | null>(null);
@@ -418,10 +419,11 @@ export default function Home() {
   }, [latestTurnScrollKey, scrollChatToBottomAfterPaint]);
 
   useEffect(() => {
-    if (!settingsOpen && !uploadMenuOpen && !aspectPanelOpen && !countPanelOpen && !modelPanelOpen) return;
+    if (!settingsOpen && !uploadMenuOpen && !aspectPanelOpen && !countPanelOpen && !modelPanelOpen && !mobileSidebarOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSettingsOpen(false);
+        setMobileSidebarOpen(false);
         setUploadMenuOpen(false);
         setAspectPanelOpen(false);
         setCountPanelOpen(false);
@@ -431,7 +433,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [settingsOpen, uploadMenuOpen, aspectPanelOpen, countPanelOpen, modelPanelOpen]);
+  }, [settingsOpen, uploadMenuOpen, aspectPanelOpen, countPanelOpen, modelPanelOpen, mobileSidebarOpen]);
 
   useEffect(() => {
     if (!pendingDeleteTurnId) return;
@@ -690,6 +692,7 @@ export default function Home() {
     const nextSession = createBlankSession();
     setSessions((current) => [nextSession, ...current.filter((session) => session.id !== nextSession.id)].slice(0, MAX_SESSION_ITEMS));
     setActiveSessionId(nextSession.id);
+    setMobileSidebarOpen(false);
     setEditingSessionId(null);
     setError("");
     scrollToComposer();
@@ -720,6 +723,7 @@ export default function Home() {
 
   function handleSwitchSession(sessionId: string) {
     setActiveSessionId(sessionId);
+    setMobileSidebarOpen(false);
     setEditingSessionId(null);
     setError("");
   }
@@ -752,11 +756,13 @@ export default function Home() {
       if (remaining.length === 0) {
         const next = createBlankSession();
         setActiveSessionId(next.id);
+        setMobileSidebarOpen(false);
         return [next];
       }
 
       if (sessionId === activeSessionId) {
         setActiveSessionId(remaining[0].id);
+        setMobileSidebarOpen(false);
       }
 
       return remaining;
@@ -1116,10 +1122,11 @@ export default function Home() {
   }, [activeSessionId, activeSession.draft.referenceImages]);
 
   return (
-    <main className="flex min-h-[100dvh] flex-col overflow-x-hidden overflow-y-auto lg:h-screen lg:overflow-hidden">
+    <main className="flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden">
       <Header
         colorTheme={colorTheme}
         onToggleTheme={handleToggleTheme}
+        onOpenSidebar={() => setMobileSidebarOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onNewChat={handleNewChat}
         onClearChat={handleClearChat}
@@ -1136,10 +1143,21 @@ export default function Home() {
         onClose={() => setSettingsOpen(false)}
       />
 
-      <div className="flex min-h-0 w-full flex-1 flex-col gap-3 px-3 pb-3 pt-20 sm:px-4 xl:px-5 lg:flex-row">
+      <div className="flex min-h-0 w-full flex-1 flex-col pt-16 lg:flex-row lg:gap-3 lg:px-4 lg:pb-3 lg:pt-20 xl:px-5">
+        {mobileSidebarOpen ? (
+          <button
+            type="button"
+            className="fixed inset-0 z-[55] bg-black/58 backdrop-blur-sm lg:hidden"
+            onClick={() => setMobileSidebarOpen(false)}
+          >
+            <span className="sr-only">关闭聊天分组</span>
+          </button>
+        ) : null}
+
         <aside
           className={cn(
-            "min-h-0 w-full shrink-0 overflow-hidden rounded-lg border border-white/10 bg-panel/55 shadow-soft transition-[width] duration-200",
+            "fixed inset-y-0 left-0 z-[60] flex h-[100dvh] min-h-0 w-[min(22rem,88vw)] shrink-0 flex-col overflow-hidden rounded-r-xl border-r border-white/10 bg-panel/92 shadow-soft transition-transform duration-200 lg:static lg:z-auto lg:h-auto lg:rounded-lg lg:border lg:bg-panel/55 lg:transition-[width]",
+            mobileSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
             sessionSidebarCollapsed ? "lg:w-16" : "lg:w-80 xl:w-84",
           )}
         >
@@ -1157,11 +1175,20 @@ export default function Home() {
             <div className={cn("flex shrink-0 items-center gap-2", sessionSidebarCollapsed ? "lg:flex-col" : "")}>
               <button
                 type="button"
+                onClick={() => setMobileSidebarOpen(false)}
+                className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-coral/60 hover:text-coral lg:hidden"
+                title="关闭聊天分组"
+              >
+                <X className="size-4" aria-hidden />
+                <span className="sr-only">关闭聊天分组</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setSessionSidebarCollapsed((current) => !current);
                   setEditingSessionId(null);
                 }}
-                className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint"
+                className="hidden size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint lg:inline-flex"
                 title={sessionSidebarCollapsed ? "展开聊天分组" : "折叠聊天分组"}
                 aria-expanded={!sessionSidebarCollapsed}
               >
@@ -1180,8 +1207,7 @@ export default function Home() {
             </div>
           </div>
 
-          {sessionSidebarCollapsed ? null : (
-          <div className="max-h-[32rem] overflow-y-auto p-2 lg:h-[calc(100dvh-8rem)] lg:max-h-none">
+          <div className={cn("min-h-0 flex-1 overflow-y-auto p-2 lg:h-[calc(100dvh-8rem)]", sessionSidebarCollapsed ? "lg:hidden" : "")}>
             <div className="space-y-2">
               {sortedSessions.map((session) => {
                 const active = session.id === activeSessionId;
@@ -1272,14 +1298,13 @@ export default function Home() {
               })}
             </div>
           </div>
-          )}
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col lg:gap-3">
           <section
             id="history"
             ref={chatRef}
-            className="min-h-0 flex-1 space-y-5 overflow-y-auto rounded-lg border border-white/10 bg-panel/55 p-4 pb-[30rem] shadow-soft lg:pb-4"
+            className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-panel/55 px-3 pb-[17rem] pt-4 sm:px-4 lg:rounded-lg lg:border lg:border-white/10 lg:bg-panel/55 lg:p-4 lg:pb-4 lg:shadow-soft"
           >
             {activeSession.turns.length === 0 ? <EmptyChatState /> : null}
 
@@ -1287,7 +1312,7 @@ export default function Home() {
               <article key={turn.id} className="space-y-3">
                 <div className="flex flex-row-reverse items-start gap-3">
                   <Avatar icon={<User className="size-4" aria-hidden />} />
-                  <div className="chat-bubble-user max-w-[min(60rem,92vw)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink">
+                  <div className="chat-bubble-user max-w-[calc(100vw-4.5rem)] rounded-2xl rounded-tr-md border border-mint/30 bg-mint px-4 py-3 text-ink lg:max-w-[min(60rem,92vw)]">
                     <p className="select-text whitespace-pre-wrap text-sm leading-6 selection:bg-ink selection:text-white">{turn.prompt}</p>
                     <div className="mt-2 flex items-center justify-end gap-2">
                       <button
@@ -1305,7 +1330,7 @@ export default function Home() {
                   <Avatar icon={<Bot className="size-4" aria-hidden />} />
                   <div
                     className={cn(
-                      "chat-bubble-assistant min-w-0 max-w-full rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3",
+                      "chat-bubble-assistant min-w-0 max-w-[calc(100vw-4.5rem)] rounded-2xl rounded-tl-md border border-white/10 bg-ink/70 p-3 lg:max-w-full",
                       turn.status === "error" ? "w-full sm:max-w-[48rem]" : "w-fit",
                     )}
                   >
@@ -1348,7 +1373,7 @@ export default function Home() {
             id="composer"
             ref={composerRef}
             className={cn(
-              "sticky bottom-2 z-30 rounded-xl border bg-panel/92 p-2.5 shadow-soft backdrop-blur lg:static lg:bottom-auto lg:z-auto",
+              "fixed inset-x-0 bottom-0 z-40 border-t bg-panel/92 p-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] shadow-[0_-18px_50px_rgba(0,0,0,0.38)] backdrop-blur-xl lg:static lg:bottom-auto lg:z-auto lg:rounded-xl lg:border lg:bg-panel/92 lg:pb-2.5 lg:shadow-soft",
               referenceDragging ? "border-mint bg-mint/[0.08]" : "border-white/10",
             )}
             onDragEnter={() => setReferenceDragging(true)}
@@ -1360,7 +1385,7 @@ export default function Home() {
             onDrop={handleDropReference}
             onPaste={handlePasteReference}
           >
-            <form onSubmit={handleGenerate} className="space-y-2">
+            <form onSubmit={handleGenerate} className="relative mx-auto w-full max-w-3xl space-y-2 lg:max-w-none">
               {error ? (
                 <div className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">{error}</div>
               ) : null}
@@ -1447,7 +1472,8 @@ export default function Home() {
                 className="h-14 min-h-14 w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-6 text-white outline-none placeholder:text-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
               />
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="grid w-full grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
                 <div className="relative shrink-0" ref={uploadMenuRef}>
                   <button
                     type="button"
@@ -1461,7 +1487,7 @@ export default function Home() {
                   </button>
 
                   {uploadMenuOpen ? (
-                    <div className="absolute bottom-full left-0 z-40 mb-2 w-36 overflow-hidden rounded-xl border border-white/10 bg-ink/95 p-1 shadow-soft">
+                    <div className="fixed bottom-[8.75rem] left-3 right-3 z-[70] overflow-hidden rounded-xl border border-white/10 bg-ink/95 p-1 shadow-soft lg:absolute lg:bottom-full lg:left-0 lg:right-auto lg:mb-2 lg:w-36">
                       <button
                         type="button"
                         onClick={() => {
@@ -1529,7 +1555,7 @@ export default function Home() {
                   </button>
 
                   {modelPanelOpen ? (
-                    <div className="absolute bottom-full left-0 z-40 mb-2 w-72 rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                    <div className="fixed bottom-[8.75rem] left-3 right-3 z-[70] max-h-[55vh] overflow-y-auto rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)] lg:absolute lg:bottom-full lg:left-0 lg:right-auto lg:mb-2 lg:w-72">
                       <div className="mb-2 flex items-center justify-between gap-2 px-1">
                         <p className="text-xs text-stone-400">选择模型</p>
                         <button
@@ -1584,7 +1610,7 @@ export default function Home() {
                   </button>
 
                   {countPanelOpen ? (
-                    <div className="absolute bottom-full left-0 z-40 mb-2 w-56 rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                    <div className="fixed bottom-[8.75rem] left-3 right-3 z-[70] rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)] lg:absolute lg:bottom-full lg:left-0 lg:right-auto lg:mb-2 lg:w-56">
                       <p className="mb-2 px-1 text-xs text-stone-400">生成数量</p>
                       <div className="grid grid-cols-3 gap-2">
                         {COUNT_OPTIONS.map((item) => (
@@ -1623,7 +1649,7 @@ export default function Home() {
                   </button>
 
                   {aspectPanelOpen ? (
-                    <div className="absolute bottom-full right-0 z-40 mb-2 max-h-[70vh] w-[min(23rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                    <div className="fixed bottom-[8.75rem] left-3 right-3 z-[70] max-h-[55vh] overflow-y-auto rounded-2xl border border-white/10 bg-panel p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)] lg:absolute lg:bottom-full lg:left-auto lg:right-0 lg:mb-2 lg:w-[min(23rem,calc(100vw-2rem))] lg:max-h-[70vh]">
                       <p className="mb-2 px-1 text-xs text-stone-400">画面比例</p>
                       <div className="space-y-1">
                         {ASPECT_OPTIONS.map((item) => (
@@ -1709,10 +1735,11 @@ export default function Home() {
                   ) : null}
                 </div>
 
+                </div>
                 <button
                   type="submit"
                   disabled={!canGenerate}
-                  className="ml-auto inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:bg-stone-600 disabled:text-stone-300"
+                  className="fixed bottom-3 right-2 z-50 inline-flex h-10 w-10 items-center justify-center rounded-full bg-mint text-ink transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:opacity-60 lg:absolute lg:bottom-1 lg:right-0 lg:z-10"
                   title="发送"
                 >
                   {activeSessionGenerating ? <Loader2 className="size-5 animate-spin" aria-hidden /> : <SendHorizontal className="size-5" aria-hidden />}
@@ -1728,7 +1755,7 @@ export default function Home() {
         <button
           type="button"
           onClick={() => scrollChatToBottom("smooth")}
-          className="fixed bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full border border-white/10 bg-ink/90 px-4 py-2 text-sm text-white shadow-soft backdrop-blur"
+          className="fixed bottom-[13.5rem] right-4 z-40 inline-flex items-center gap-2 rounded-full border border-white/10 bg-ink/90 px-4 py-2 text-sm text-white shadow-soft backdrop-blur lg:bottom-24"
         >
           <ChevronDown className="size-4" aria-hidden />
           回到底部
@@ -2085,13 +2112,13 @@ function ReferenceImagePreviewDialog({
 
 function EmptyChatState() {
   return (
-    <div className="grid min-h-[320px] place-items-center rounded-lg border border-dashed border-white/15 bg-white/[0.03] p-8 text-center">
+    <div className="grid min-h-full place-items-center p-6 text-center lg:min-h-[320px] lg:rounded-lg lg:border lg:border-dashed lg:border-white/15 lg:bg-white/[0.03] lg:p-8">
       <div className="max-w-md">
         <div className="mx-auto grid size-14 place-items-center rounded-md bg-white/[0.06] text-mint">
           <Bot className="size-6" aria-hidden />
         </div>
         <h2 className="mt-4 text-lg font-semibold text-white">还没有对话</h2>
-        <p className="mt-2 text-sm leading-6 text-stone-400">输入一句描述，结果会像聊天回复一样出现在左侧。</p>
+        <p className="mx-auto mt-2 max-w-[calc(100vw-2rem)] break-words text-sm leading-6 text-stone-400">输入一句描述，结果会像聊天回复一样出现在左侧。</p>
       </div>
     </div>
   );

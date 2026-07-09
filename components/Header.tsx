@@ -1,7 +1,8 @@
 ﻿import Link from "next/link";
-import { ExternalLink, FilePlus, FileText, History, Moon, Settings, Sparkles, Sun, Trash2 } from "lucide-react";
+import { ExternalLink, FilePlus, FileText, History, Menu, Moon, Settings, Sparkles, Sun, Trash2 } from "lucide-react";
 
 type HeaderProps = {
+  onOpenSidebar?: () => void;
   onOpenSettings?: () => void;
   onNewChat?: () => void;
   onClearChat?: () => void;
@@ -9,18 +10,27 @@ type HeaderProps = {
   onToggleTheme?: () => void;
 };
 
-export function Header({ onOpenSettings, onNewChat, onClearChat, colorTheme = "night", onToggleTheme }: HeaderProps) {
+export function Header({ onOpenSidebar, onOpenSettings, onNewChat, onClearChat, colorTheme = "night", onToggleTheme }: HeaderProps) {
   const dayMode = colorTheme === "day";
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-ink/92 shadow-soft backdrop-blur-xl">
-      <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+      <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-2 px-3 sm:px-4 lg:gap-3 lg:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="grid size-9 shrink-0 place-items-center rounded-md bg-mint text-ink shadow-soft">
+          <button
+            type="button"
+            onClick={onOpenSidebar}
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint lg:hidden"
+            title="打开聊天分组"
+          >
+            <Menu className="size-4" aria-hidden />
+            <span className="sr-only">打开聊天分组</span>
+          </button>
+          <div className="hidden size-9 shrink-0 place-items-center rounded-md bg-mint text-ink shadow-soft sm:grid">
             <Sparkles className="size-5" aria-hidden />
           </div>
-          <div className="hidden min-w-0 sm:block">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mint">天晴了绘图</p>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-mint sm:uppercase sm:tracking-[0.18em]">天晴了绘图</p>
           </div>
         </div>
 
@@ -37,7 +47,7 @@ export function Header({ onOpenSettings, onNewChat, onClearChat, colorTheme = "n
           <button
             type="button"
             onClick={onClearChat}
-            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-coral/60 hover:text-coral sm:size-10"
+            className="hidden size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-coral/60 hover:text-coral sm:inline-flex sm:size-10"
             title="清空当前聊天"
           >
             <Trash2 className="size-4" aria-hidden />
@@ -45,7 +55,7 @@ export function Header({ onOpenSettings, onNewChat, onClearChat, colorTheme = "n
           </button>
           <Link
             href="/docs"
-            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
+            className="hidden size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:inline-flex sm:size-10"
             title="说明文档"
           >
             <FileText className="size-4" aria-hidden />
@@ -53,7 +63,7 @@ export function Header({ onOpenSettings, onNewChat, onClearChat, colorTheme = "n
           </Link>
           <a
             href="#history"
-            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
+            className="hidden size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:inline-flex sm:size-10"
             title="历史记录"
           >
             <History className="size-4" aria-hidden />
@@ -63,7 +73,7 @@ export function Header({ onOpenSettings, onNewChat, onClearChat, colorTheme = "n
             href="https://dahlo.live/"
             target="_blank"
             rel="noreferrer"
-            className="inline-flex size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:size-10"
+            className="hidden size-9 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-stone-200 transition hover:border-mint/50 hover:text-mint sm:inline-flex sm:size-10"
             title="返回中转"
           >
             <ExternalLink className="size-4" aria-hidden />
